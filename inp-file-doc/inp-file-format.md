@@ -222,7 +222,7 @@ Example:
 | 97 | number of Heat Exchanger heat fluxes |
 | 98–135 | *"Not used" — reserved* |
 
-*(Field indices above are relative to this table, not raw file line numbers
+*(Field indices above are relative to this table, not raw file line numbers; the block spans file lines 2–136 in every sample inspected — a small number of labels are truncated/duplicated oddly in the source format itself, see entries 33/49/88 above.)*
 
 ### 3.3 Associated projects and units
 
@@ -401,9 +401,10 @@ Beam (Elastic Beam nail):  ELAS-> 200000000  0.3  1
                             0  0
 ```
 
-**`GEOM->` — geometry/cross-section.** Layout depends on material type (confirmed via `zsoil_inp.py`, which branches on `mat.type`, plus direct inspection of layered-beam/layered-shell examples):
-- **Beam**: `GEOM-> <def_type>` where `def_type` selects how the cross-section is defined: `0` = named profile (extra lines: blank, profile name, dimension values), `1` = explicit dimensions + computed section values (2 lines: dimensions, then computed values), `2` = raw section values only (1 line). Example (`def_type=1`, rectangular): `GEOM-> 1` / `2  0.05  0.3  0.5  0.1  0.1  0.1` (dimensions) / `0.00196... 0.00168... ...` (area, Iyy, Izz, etc. — computed section properties) / `1  -1  0`.
-  - **Layered/composite beam variant** — confirmed from `NL_beam_traction_forceCtrl.inp`, which defines two otherwise-identical beam materials differing only in `BUTTONS[6]` (0-indexed) and the line that follows the dimensions/section-values pair: a plain `"Elastic beam"` (`BUTTONS[6]=0`) ends that pair with `1  -1  0` (as above, no further lines); a `"Layered beam"` (`BUTTONS[6]=1`, same material type string `Elastic Beam`, same `def_type=1` dimensions/values pair) instead ends it with `3  1  1`, followed by **one line per embedded reinforcement fiber**, blank-line-terminated:
+**`GEOM->` — geometry/cross-section.** Layout depends on material type:
+- **Beam**: `GEOM-> <type>` where `type` selects how the cross-section is defined: `0` = "Profiles" (extra lines: blank, profile name, dimension values), `1` = "User": explicit dimensions + computed section values (2 lines: dimensions, then computed values), `2` = "Values": raw section values only (1 line). 
+Example (`type=1`, rectangular): `GEOM-> 1` / `2  0.05  0.3  0.5  0.1  0.1  0.1` (dimensions) / `0.00196... 0.00168... ...` (area, Iyy, Izz, etc. — computed section properties) / `1  -1  0`.
+  - **Layered/composite beam variant** — defines two otherwise-identical beam materials differing only in `BUTTONS[6]` (0-indexed) and the line that follows the dimensions/section-values pair: a plain `"Elastic beam"` (`BUTTONS[6]=0`) ends that pair with `1  -1  0` (as above, no further lines); a `"Layered beam"` (`BUTTONS[6]=1`, same material type string `Elastic Beam`, same `type=1` dimensions/values pair) instead ends it with `<1+n_reinf_fibers>  1  1`, followed by **one line per embedded reinforcement fiber**, blank-line-terminated:
     ```
      GEOM-> 1
     0  1  0.3  1  0.1  0.1  0.1
@@ -412,14 +413,32 @@ Beam (Elastic Beam nail):  ELAS-> 200000000  0.3  1
     0  2  0.4  0.1  0.1  0  180  10  0.005  0  1  2
     0  2  -0.4  0.1  0.1  0  180  10  0.005  0  1  2
     ```
-    The `3  1  1` line's leading `3` (vs. `1` in the non-layered case) is the cross-section-subtype code for "layered"; the two fiber lines that follow are symmetric (`+0.4`/`-0.4`) rebar layers. Per fiber line `<?> <componentId> <yOffset> <?> <?> <?> <?> <?> <?> <?> <?> <?>`: `componentId` (2nd field, here `2` for both) references a `LAYERED_BEAM_COMPONENTS` entry by number (§4.3) — here component `2` = "steel" — and `yOffset` (3rd field, `±0.4`) is the fiber's position within the section. The base rectangular section (from the dimensions/values pair above) implicitly acts as the matrix/background material; remaining fields *(meaning unclear from available sources)*.
+    The two fiber lines that follow are symmetric (`+0.4`/`-0.4`) rebar layers. Per fiber line `<?> <offsetType> <yOffset> <zOffsetL> <zOffsetR> <?> <?> <n_reinf_bars> <total_area> <prestress> <?> <componentId>`:
+   - `offsetType`: `0` = "From top"; `1` = "From bot."; `2` = "From center"
+   - `yOffset`: (3rd field, `±0.4`) is the fiber's *relative*, vertical position within the section. 
+   - `zOffsetL` and `zOffsetR`: (4th and 5th fields, `0.1`) are the left and right-most fiber's *relative*, horizontal position within the section. 
+   - `n_reinf_bars`: (8th field, `10`) is the number of bars in the fiber. This value has no influence on the physics, as only the total area matters. The value is used for the section figure only.
+   - `total_area`: The total area of all `n_reinf_bars` in the fiber.
+   - `prestress`: The prestress in the fiber.
+   - `componentId`: references a `LAYERED_BEAM_COMPONENTS` entry by number (§4.3) — here component `2` = "steel"
 - **Truss**: `GEOM-> <area>` — a single cross-sectional area value.
 - **Continuum**: `GEOM-> <value>` — a single value, unclear meaning.
-- **Shell Layered**: multi-fiber section definition, confirmed from `NL_shell_traction.inp` against `zsoil_inp.py`'s `ShellSection`/`ShellFiber` parsing (which was previously unconfirmed by a raw example):
+- **Shell Layered**: multi-fiber section definition:
   ```
    GEOM-> 1  10  2  0.005  0.4  2    0.005  -0.4  2    1  2  2
   ```
-  Fields (0-indexed after the `GEOM->` token itself is `v[0]`): `v[1]`=`def_type`=1; `v[2]`=`10` *(meaning unclear from available sources)*; `v[3]`=`nFibers`=2; then per fiber `<area> <distance> <distanceFrom>` at `v[4+3k]`/`v[5+3k]`/`v[6+3k]` — fiber 1: area=`0.005`, distance=`0.4` (above mid-plane), `distanceFrom`=`2`; fiber 2: area=`0.005`, distance=`-0.4` (below mid-plane), `distanceFrom`=`2`; then `v[4+3·nFibers]`=`core_material`=`1` (the shell's core/matrix material id — here material `1`, "concrete"), followed by one material-id field per fiber at `v[5+3·nFibers+k]` — both fibers reference material `2` ("steel"). This is the shell equivalent of the layered-beam pattern above: a concrete core (`core_material`) with steel reinforcement fibers symmetrically placed top and bottom. The fiber/core material ids reference a **second, separate `NUM_MATERIALS=` block** of type `"Fiber Shell"` that immediately follows this material's own block — see §4.3.
+  Fields (0-indexed after the `GEOM->` token itself is `v[0]`): 
+ - `v[1]`=`type`=1
+ - `v[2]`=`10` *(meaning unclear from available sources)*
+ - `v[3]`=`nFibers`=2
+ - then per fiber `k:`
+  - `<area> <distance> <distanceFrom>` at `v[4+3k]`/`v[5+3k]`/`v[6+3k]`: fiber 1: area=`0.005`, distance=`0.4` (above mid-plane), `distanceFrom`=`2`; fiber 2: area=`0.005`, distance=`-0.4` (below mid-plane), `distanceFrom`=`2`
+ - then `v[4+3·nFibers]`=`core_material`=`1` (the shell's core/matrix material id — here material `1`, "concrete"), followed by one material-id field per fiber at `v[5+3·nFibers+k]` — both fibers reference material `2` ("steel"). This is the shell equivalent of the layered-beam pattern above: a concrete core (`core_material`) with steel reinforcement fibers symmetrically placed top and bottom. The fiber/core material ids reference a **second, separate `NUM_MATERIALS=` block** of type `"Fiber Shell"` that immediately follows this material's own block — see §4.3.
+
+  **`distanceFrom` meaning**: The fiber position for a shell layer is a coordinate `ξ ∈ [-1, 1]` normalized to half-thickness (`y_physical = ξ · thickness/2`), and `distanceFrom` selects how the entered `distance` maps onto that normalized `ξ`:
+  - `distanceFrom=0`: `distance` is a fraction of *full* thickness measured inward from the top surface, giving `ξ = 1 - 2·distance`.
+  - `distanceFrom=1`: mirror of `distanceFrom=0`, measured from the bottom surface, giving `ξ = 2·distance - 1`.
+  - `distanceFrom=2`: `ξ = distance` directly — i.e. `distance` *is* already the normalized mid-plane-relative coordinate.
 
 **`DENS->` — density/consolidation/permeability-adjacent parameters.** Example (continuum): `DENS-> 20  10  0.6  1  1  16.7` followed by 3 more lines (largely `0`s in samples, plus a line like `-1  26.5  20  10  0`). First value looks like unit weight (`20`); remaining fields *(meaning unclear from available sources beyond the first value)*.
 
@@ -451,7 +470,7 @@ concrete fiber material: `1000`, `500000` (tension/compression strength-like val
 
 ### 4.3 Other material-related blocks
 
-- **`LAYERED_BEAM_COMPONENTS <n>`**: components for layered/composite beam sections (the fiber materials referenced by a `"Layered beam"` material's `GEOM->` block, §4.2). Record: number, name, then one line of parameters — type (`0`=elastic, `1`=elastic-plastic, `2`=user), E, nu, and further softening/creep parameters (`E0_setup`, regularization flag, characteristic length, coupled softening flag, creep type/A/B — per `zsoil_inp.py`'s `LayeredBeamComponent` parsing); if `type==2` (user model), two further lines name the tension/compression stress-strain functions (`ft_fun`, `fc_fun`).
+- **`LAYERED_BEAM_COMPONENTS <n>`**: components for layered/composite beam sections (the fiber materials referenced by a `"Layered beam"` material's `GEOM->` block, §4.2). Record: number, name, then one line of parameters — type (`0`=elastic, `1`=elastic-plastic, `2`=user), E, nu, and further softening/creep parameters (`E0_setup`, regularization flag, characteristic length, coupled softening flag, creep type/A/B); if `type==2` (user model), two further lines name the tension/compression stress-strain functions (`ft_fun`, `fc_fun`).
 
   **Populated example confirmed** from `NL_beam_traction.inp` / `NL_beam_traction_forceCtrl.inp` (identical in both — a reinforced-concrete beam modeled with a concrete matrix and steel reinforcement fibers):
   ```
@@ -463,8 +482,20 @@ concrete fiber material: `1000`, `500000` (tension/compression strength-like val
   steel
   2e+08  0.3  25  1  235000  235000  0  0.005  0  0  -1  0  1  
   ```
-  Field-by-field for the parameter line (`v[0]`-indexed): `E`=`v[0]` (`2e+07` concrete, `2e+08` steel), `nu`=`v[1]` (`0.3` both), `v[2]`=`25` *(meaning unclear — identical for both materials despite very different real-world unit weights, so probably not unit weight; possibly a shared default such as a reference temperature)*, `type`=`v[3]`=`1` (elastic-plastic, both), then `v[4]`/`v[5]`: **confirmed by comparison** to be tension/compression strength — concrete `1000`/`10000` (asymmetric: weak in tension, strong in compression, consistent with real concrete behavior), steel `235000`/`235000` (symmetric, matching structural steel's ~235 MPa yield strength in both tension and compression), `reg_soft`=`v[6]`=`0`, `char_len`=`v[7]`=`0.005` (both), `E0_setup`=`v[8]`=`0`, `coupTC_soft`=`v[9]`=`0`, `creep_type`=`v[10]`=`-1` (both — creep disabled), `creep_A`=`v[11]`=`0`, `creep_B`=`v[12]`=`1` (both).
-- **`SIG_EPS_FUN <n>`**: user-defined stress-strain functions, referenced from `LAYERED_BEAM_COMPONENTS`/nonlinear materials by name. Example header line from `boxd1.inp`: `SIG_EPS_FUN 1` followed by a record (`1 2 Default`, flags, and value pairs) — *(full field layout not confirmed; zsoil_inp.py does not parse this marker)*.
+  Field-by-field for the parameter line (`v[0]`-indexed): 
+ - `E`=`v[0]` (`2e+07` concrete, `2e+08` steel)
+ - `nu`=`v[1]` (`0.3` both)
+ - `v[2]`=`25` *(meaning unclear — identical for both materials despite very different real-world unit weights, so probably not unit weight; possibly a shared default such as a reference temperature)*, `type`=`v[3]`=`1` (elastic-plastic, both)
+ - `ft`=`v[4]`: tension strength
+ - `fc`=`v[5]`: compression strength
+ - `reg_soft`=`v[6]`=`0`
+ - `char_len`=`v[7]`=`0.005` (both)
+ - `E0_setup`=`v[8]`=`0`
+ - `coupTC_soft`=`v[9]`=`0`
+ - `creep_type`=`v[10]`=`-1` (both — creep disabled)
+ - `creep_A`=`v[11]`=`0`
+ - `creep_B`=`v[12]`=`1` (both).
+- **`SIG_EPS_FUN <n>`**: user-defined stress-strain functions, referenced from `LAYERED_BEAM_COMPONENTS`/nonlinear materials by name. *(full field layout not confirmed)*.
 - **Fiber-material sub-blocks for layered shells**: unlike layered beams (which use the dedicated `LAYERED_BEAM_COMPONENTS` keyword above), a `"Shell Layered"` material's fiber/core materials are defined as a **second `NUM_MATERIALS= <n>` block**, placed immediately after the layered shell material's own single-material block, using material type `"Fiber Shell"` — confirmed from `NL_shell_traction.inp`:
   ```
   NUM_MATERIALS= 1
