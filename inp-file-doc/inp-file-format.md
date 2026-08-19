@@ -639,6 +639,8 @@ The finite-element mesh nodes:
 
 One line per node, count taken from the header (§3.2, "number of nodes"). The trailing `<flag>` (always observed as `0`) *(meaning unclear)*.
 
+**Hand-editing gotcha**: `<flag>` must be written as a plain integer literal (`0`), not a float — writing it as `0.000000000000e+00` (e.g. by careless string-formatting when programmatically rewriting node lines) produces a file ZSoil silently refuses to open. Confirmed by reproducing the failure: a batch coordinate-update script that reused the line's float formatter for every field, including this one, broke the file; reverting just this field to a bare `0` fixed it.
+
 Example:
 ```
 .ing
@@ -731,7 +733,7 @@ A recurring pattern across nearly every element record is:
 <idx> <number> <TAG> <node1> ... <nodeN> <...type-specific fields...> <mat> <rm1> <rm2> <EF> <LF> [<extra>]
 ```
 
-where `<idx>` is the 1-based sequential position of the record within the block (matches array order) and `<number>` is the user-visible element number (may or may not coincide with `<idx>`). Several trailing integer fields recur across element families whose exact purpose is unknown; these are called out per-section.
+where `<idx>` is a **global counter shared across every element block in the file**, incrementing continuously in file order regardless of type — e.g. in a model with 3943 `.i0g` continuum elements followed by 32 `.ibg` beams, the first beam's `<idx>` is `3944`, not `1`. `<number>` is a **per-block-type counter that restarts at 1** for each new element section (`.i0g`, `.ibg`, `.itg`, `.anh`, ...) — it only happens to equal `<idx>` for continuum elements because `.i0g` is the first element block in the file. Confirmed empirically: `<idx>` (not `<number>`) is the value used whenever one element cross-references another — `.ics`/`.icg` contact records name their paired element by `<idx>`, and `.anh` anchor headers name their `.itg` truss by `<idx>`. When hand-inserting new elements, give them fresh `<idx>` values continuing past the current file-wide maximum (gaps in the sequence appear tolerated — ordering, not contiguity, is what other records seem to rely on) and let `<number>` continue whatever count is natural for that element's own block. Several trailing integer fields recur across element families whose exact purpose is unknown; these are called out per-section.
 
 ### 7.1 `.i0g` — Volumic/continuum elements
 
@@ -745,6 +747,8 @@ Node indices follow the tag, then — at an offset `pos` that depends on the tag
 1 1 Q4 1 2 3 4 1 1 1 0 0 0 0 0
 ```
 Field breakdown (0-indexed after split): `v0`=1 (idx), `v1`=1 (element number), `v2`=`Q4`, `v3..v6`=nodes 1,2,3,4, `v7..v8`=1,1 *(unclear)*, `v9`=1 (mat), `v10`=0 (rm1), `v11`=0 (rm2), `v12`=0 (EF), `v13`=0 (LF), `v14`=0 (trailing, unclear).
+
+**Node order / face numbering (confirmed empirically)**: `v3..v6` must be listed counter-clockwise (positive-area shoelace sum) for the element to be valid — a clockwise or self-intersecting listing produces a degenerate/inverted element. Local face (edge) numbering, otherwise undocumented by ZSoil, follows directly from this listed order: **face `k` is the edge from `node_k` to `node_{k+1}`** (1-indexed, wrapping — so face 1 = n1→n2, face 2 = n2→n3, face 3 = n3→n4, face 4 = n4→n1). This is what `.ics`/`.icg` "paired-elem face" fields (§7.8, §7.9) and `.gsl` `UNI_LOAD` face references (§9.3) actually mean; confirmed by cross-checking multiple real `.ics`/`.icg` records against the coordinates of the nodes on the named face.
 
 **B8 (8-node hex)**:
 ```
@@ -882,11 +886,17 @@ Count-terminated: count = `"number of contact lines (*.icg), (*.icm)"`. Both `C_
 No name
 1 2 0 0 0.000000e+00
 ```
-Line 1: `<idx> <number> C_L2 <volele> <volface> <?> <?>` → `volele`=2, `volface`=1; `v5`,`v6`=1,3 *(unclear)*.
+Line 1: `<idx> <number> C_L2 <elem1> <face1> <elem2> <face2>` — confirmed: `v3`/`v4` and `v5`/`v6` are each an `(element idx, local face)` pair (face numbering per §7.1), naming the **two element edges being tied together**. Here `volele`=2 face=1, and `elem2`=1 face=3.
 Line 2: 4-node connectivity ` 5 8 4 7` (the two coincident node pairs across the interface), followed by `1 1 0` — the second of these three trailing fields (here `1`) is the **count of trailing type/mat/EF/LF records** that follow (see the multi-record example below); the other two are *(unclear)*.
 Line 3: `0.000000e+00 0` *(unclear, plausibly initial gap + a flag)*.
 Line 4: interface name (`No name`).
 Line 5 (repeated per the record count from line 2): `<type> <mat> <EF> <LF> <trailing float>` = `1 2 0 0 0.000000e+00` → type=1 (contact), mat=2, EF=0, LF=0, trailing=0.0 *(unclear)*.
+
+**Connectivity node order (confirmed)**: on line 2, the 4 nodes are `<elem1_faceNode_k+1> <elem1_faceNode_k> <elem2_faceNode_k> <elem2_faceNode_k+1>` — i.e. `elem1`'s face-node pair is listed **reversed**, `elem2`'s **forward**. E.g. for a tie where `elem1` face 3 runs `n3=1806 → n4=1802` and `elem2` face 1 runs `n1=1801 → n2=1805`, the connectivity line reads ` 1802 1806 1801 1805` (elem1 reversed, elem2 forward). This opposite winding is consistent with the two faces having opposite outward normals.
+
+**Real-world use beyond staged construction**: `type`=2 ("continuity without pressure") is used not only at documented material/staging boundaries but also as a generic **rigid tie between two independently-numbered mesh regions that are geometrically coincident but don't share node IDs** — e.g. where ZSoil's mesher stitched two separately-generated subdomains together at a seam with no wall, contact, or staging involved. Encountered in a real model at a plain soil-soil seam ~30 m from any structural or staging feature: two nodes at identical coordinates but different IDs (no shared node, no `.ikg` kinematic constraint) were tied only by a `.icg type=2` record. **Do not assume a duplicated-position, differently-numbered node pair is disconnected/erroneous** — check `.icg` for a tie before concluding the mesh has a crack.
+
+**When splitting/refining an element that has a `.icg` tie on one of its edges**: the tie's `elem`/`face` reference must be updated to whichever new sub-element now owns that edge (the *original* element idx no longer exists) — and remember to also search for `.icg`/`.ics` records referencing that element from other, unrelated ties (an element can be named by more than one contact/tie record, e.g. one tie on its near edge from the feature you're editing, and an unrelated tie on a different edge from something else entirely).
 
 **`C_Q4` (3D)**: same field structure as `C_L2` but with an 8-node connectivity line (two 4-node faces):
 ```
@@ -941,7 +951,27 @@ No name
 0.000000e+00 0
 1 18 2 0 0.000000e+00
 ```
-Same 7-line-per-record structure as the `C_Q4` case: header line (here `v3`=482 is the beam element number the contact rides on), name, a `<?> <?>` line, 4-node connectivity, two skipped lines, and a final `<?> <mat> <EF> <LF> <trailing>` line.
+Same 7-line-per-record structure as the `C_Q4` case: header line (here `v3`=482 is the beam element number the contact rides on), name, a `<?> <?>` line, 4-node connectivity, two skipped lines, and a final `<?> <mat> <EF> <LF> <trailing>` line. `v6` (here `1`) is `nsides`: `1` = single-sided (one `<paired-elem face>` block, as above); `2` = double-sided — a beam embedded in soil on both faces (e.g. a wall) gets **two** `<paired-elem face> / <connectivity> / <skip> / <skip> / <data>` blocks back to back, one per face, sharing the one header/name pair.
+
+**Double-sided example** (a wall's bottom beam segment, contacted on both its west and east faces):
+```
+.ics
+32 32 C_L2 3944 1 0 2 3
+No name
+1480 2
+ 1806 14 1804 14
+1 1
+0.000000e+00 0
+1 7 5 0 0.000000e+00
+1833 2
+ 14 1807 14 1804
+1 1
+0.000000e+00 0
+1 7 5 0 0.000000e+00
+```
+Beam `3944` connects nodes `14`(lower) → `1804`(upper). West side: paired-elem `1480` face `2`; connectivity ` 1806 14 1804 14` = `<soil@upper> <soil@lower> <beam@upper> <beam@lower>`. East side: paired-elem `1833` face `2`; connectivity ` 14 1807 14 1804` = `<soil@lower> <soil@upper> <beam@lower> <beam@upper>` — **the two sides use opposite node order** (west reversed relative to the beam's own node1→node2 direction, east forward), matching the `.icg` reversed/forward convention (§7.8) and presumably serving the same opposite-outward-normal purpose.
+
+**Node reuse gotcha**: where two beam elements share an endpoint (e.g. beam A ends and beam B starts at the same beam node), ZSoil's mesher does **not** reuse one soil-side contact node across both beams' contact records — each beam segment gets its **own**, separately-numbered soil-side node at that shared point (per side). Don't assume the soil-side node from an adjacent beam segment's contact can be reused when hand-building a new one; always allocate a fresh coincident node.
 
 **`.scs`** and **`.ims`** — typically empty; no populated example is available for either.
 
@@ -1016,6 +1046,8 @@ Count-terminated, no dedicated header label. Simplified version of `.pil`/`.nil`
 4.000000000000e-01 5.000000000000e-01 0.000000000000e+00 1 74
 ```
 `v3`=126 references the `.itg` `TRS2` truss element this anchor's free length is built on; `v5`=20 is plausibly `nSeg` (21 axis points follow, matching). Material line ` 14 0`: single `mat`=14, no separate `qsmat`/`qpmat`.
+
+**Axis-point trailing fields (confirmed)**: each axis-point line's trailing `<count> <id...>` is **not** node indices (despite superficially resembling the `.pil`/`.nil` point-flag pattern) — it is `<count of .i0g continuum elements> <element idx...>` identifying which continuum element(s) the fixed-anchor-zone point falls in: `1 <id>` when the point lies strictly inside element `<id>`, `2 <id1> <id2>` when it lies on the shared edge between two elements. Confirmed by checking that the referenced elements' node coordinates bound the axis point's own `(x,y)`. This is presumably how ZSoil interpolates/distributes the bond-length load transfer into the surrounding soil mesh. Practical consequence: if an anchor's fixed zone is moved (e.g. to a different elevation) without remeshing, these element references go stale and must be recomputed by point-locating the new trajectory against the current `.i0g` mesh — they will not simply carry over.
 
 ### 7.15 Cables/tendons: `.cbl` + `.bcb` + `.bcl`
 
@@ -1217,7 +1249,7 @@ Blank-line-terminated (no separate count field consumed here; the block simply e
 <eleId1> <faceId1>
 ...                              <- nFaces lines of (element id, local face id)
 ```
-(the local `faceId` numbering for `B8` volumic targets follows §7.1's B8 face-numbering convention; for a 2D `Q4` element, the edge-numbering convention has not been derived.)
+(the local `faceId` numbering for `B8` volumic targets follows §7.1's B8 face-numbering convention; for a 2D `Q4` element, `faceId` `k` = the edge from the element's `node_k` to `node_{k+1}`, 1-indexed and wrapping — see the confirmed convention in §7.1.)
 
 Example (4 separate uniform loads on individual element faces):
 ```
