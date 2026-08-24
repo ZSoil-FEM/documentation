@@ -61,9 +61,54 @@ The face-id table in §7.1 came from cross-referencing `.i0g` connectivity again
 
 Two 2D samples with different `@..._version:` sub-version numbers (`boxd1.inp`, created with `9.05`; `el_simple_load_2D_tri.inp`/`2D_anchor_disp_s1m.inp`, created with `24.06`) showed different `.inb` record widths (16 vs 19 tokens) despite both being 2D. The "format evolution, not a 2D/3D distinction" conclusion follows from this comparison and from `zsoil_inp.py`'s own commented-out alternate-indices branch (`[3,7,11]` for `analysis_type==2`), which suggests the parser used to handle a narrower layout explicitly. This is inference from two data points, not a confirmed changelog — if more sample files across sub-versions become available, worth re-checking with a larger sample.
 
+## §8.3 `.pbc` / §6.5 `.apl` — periodic BC now has a populated example
+
+Source: the user's own domain knowledge (not derived from the corpus or GUI this time) plus a real working file built collaboratively this session, `C:\Mandats\M100\papers\NUMGE2027\calc\zsoil\shear_column\Model_N5.inp` — a periodic tie linking the two side-columns of a 1D shear-beam mesh at every row. The user stated directly that `.pbc`'s header `<type>` field is a **DOF bitmask** (2=Ux, 4=Uy, 8=Uz, 16/32/64=rotations, then pressure/temperature/humidity bits), not an opaque constant — `type=14` in the example decodes as `2+4+8` = Ux+Uy+Uz tied. This also resolved the previously-unexplained numerical match between a `.pbc` block's own plane-definition line and a corresponding `.apl` entry's plane line (§6.5): they're the same plane, `.apl` being the plane geometry `.pbc` ties nodes across — so `.apl` is not purely a GUI sketch aid as the doc previously implied, it's functionally load-bearing whenever a periodic BC exists. Still unconfirmed: the 11-numeric-flags line in `.pbc` (purpose unknown), the `.pbc`/`.apl` cross-reference mechanism (numerically identical plane data in both, but no confirmed index field linking them), and the `.apl` plane-type field (`3` in the only example seen).
+
+## §5.2 `LOAD_FUN` — flags-line `#N` is the interpolation selector, not the numeric line's 3rd field
+
+Corrected mistake, same source (user's domain knowledge, same session as the `.pbc` entry above). The doc previously described the numeric line after the flags line as `[t0, scale, type]`, guessing `type` (3rd field) was the interpolation-mode selector. Wrong — the flags line itself carries that selector, as `#1` (solver interpolates the table at its own time increments) or `#0` (solver is forced to step through the LTF's own listed time points); the numeric line's 3rd field is a genuinely separate, still-unidentified field (always `0` in examples seen), and its 1st/2nd fields are a time **shift** and a **scale**, not "t0"/"scale" in the sense implied before. `No flags` (rather than `#N`) also appears in at least one real example (the doc's own trivial §5.2 example) — how it relates to `#0`/`#1` is unconfirmed.
+
+## §3.4 `DYN_CONTROL` field layout / §3.5 `DRIVERS` record structure
+
+Same session/source as the `.pbc`/`.apl`/`LOAD_FUN`/`.inb`-flag entries above — `Model_N5.inp`, this time reading the pre-existing `DYN_CONTROL` and `DRIVERS` blocks the user had already set up (not authored by us) and checking them against the doc.
+
+- **`DYN_CONTROL`**: previously an undecoded stub ("field-by-field layout not decoded here"). Positionally confirmed the `alpha`/`beta`/`gamma` fields on the main numeric line via the standard HHT-Newmark identity `beta=(1-alpha)^2/4, gamma=0.5-alpha` — the example's `alpha=-0.3` gives exactly `beta=0.4225, gamma=0.8`, matching the file. This is a strong confirmation (the math has to work out, not just plausible field-guessing) but only from one example (one alpha value); most other fields on all 5 lines remain unclear. Also noted a second `alpha` value on line 5, numerically identical to the main line's in this example — genuinely unconfirmed whether it's a redundant copy or a real secondary control that could disagree in some other file.
+- **`DRIVERS`**: the doc previously claimed this followed §3.4's generic 2-line (name+numeric) named-set pattern. It doesn't — this was already known more precisely in the `zsoil` Claude Code skill's own gotcha notes (an `.inb`-adjacent finding from an earlier part of this same overall effort, not re-derived from scratch this session) but had never been carried into this canonical doc. Corrected here: 3 lines per driver record (name / numeric / solver-settings-name, the last of which must match a `CONTROL` name), a mandatory `init` driver not counted in `<n>`, and the numeric line's `<type>` being a 0-indexed `DriversType` enum (`DYNAMICS`=4). Also flagged 4 trailing lines after all driver records that neither the skill notes nor this doc explain — present unchanged in the example, left as an open gap rather than guessed at.
+
+## §6.1 `.ing` — trailing flag must be an integer literal
+
+Found by reproducing a real failure: a batch coordinate-update script reused the line's float formatter for every field, including the trailing flag, writing `0.000000000000e+00` instead of `0`. ZSoil silently refused to open the resulting file. Reverting just that field to a bare `0` fixed it. Doc now states the rule directly (§6.1) without the story.
+
+## §7 Elements — `<idx>` vs `<number>` counters
+
+Observed in a model with 3943 `.i0g` continuum elements followed by 32 `.ibg` beams: the first beam's `<idx>` was `3944` (continuing the file-wide sequence), not `1`, while its `<number>` restarted at `1`. Confirmed `<idx>` (not `<number>`) is what `.ics`/`.icg` paired-element fields and `.anh` truss references use, by cross-checking those references against the referenced element's actual `<idx>`. Gaps in the `<idx>` sequence appear tolerated when hand-inserting elements — ordering, not contiguity, is what other records seem to rely on — but this wasn't stress-tested beyond one or two inserted elements.
+
+## §7.1 `Q4` node order / face numbering
+
+Confirmed by cross-checking multiple real `.ics`/`.icg` records' "paired-elem face" fields against the coordinates of the nodes on the named face in `.ing` — the counter-clockwise / `face k = node_k → node_{k+1}` rule held in every case checked.
+
+## §7.8 `.icg` — connectivity node order and real-world usage
+
+**Node order**: confirmed against a concrete example — a tie where `elem1` face 3 ran `n3=1806 → n4=1802` and `elem2` face 1 ran `n1=1801 → n2=1805` produced the connectivity line ` 1802 1806 1801 1805` (elem1's face-node pair reversed, elem2's forward). This opposite winding is consistent with the two faces having opposite outward normals — doc now states the rule without this specific instance.
+
+**`type=2` as a generic rigid tie**: encountered in a real model at a plain soil-soil seam ~30 m from any structural or staging feature — two nodes at identical coordinates but different IDs, no shared node, no `.ikg` kinematic constraint, tied only by a `.icg type=2` record. This is why the doc now warns not to assume a duplicated-position, differently-numbered node pair is a meshing error without checking `.icg` first.
+
+## §7.9 `.ics` — double-sided beam contact example
+
+Full example that the doc's condensed version was distilled from (a wall's bottom beam segment, contacted on both faces): beam `3944` connects nodes `14`(lower) → `1804`(upper). West side: paired-elem `1480` face `2`; connectivity ` 1806 14 1804 14` = `<soil@upper> <soil@lower> <beam@upper> <beam@lower>`. East side: paired-elem `1833` face `2`; connectivity ` 14 1807 14 1804` = `<soil@lower> <soil@upper> <beam@lower> <beam@upper>` — west reversed relative to the beam's own node1→node2 direction, east forward, matching the `.icg` §7.8 convention.
+
+## §7.14 `.anh` — axis-point trailing fields
+
+Confirmed by checking that the referenced `.i0g` element(s)' node coordinates actually bound the axis point's own `(x,y)` — for several axis points across at least one anchor, both the single-element (`1 <id>`) and shared-edge (`2 <id1> <id2>`) cases checked out.
+
+## §8.1 continuum-node `.inb` flag values (1/4/6) and multi-record priority
+
+Same source/session as the `.pbc`/`.apl` entries above, from building and debugging `Model_N5.inp`'s base boundary condition (originally acceleration-driven, then changed to velocity-driven by the user mid-session — both went through this same mechanism, just with `flag=6` vs `flag=4`). Established across this and an earlier (compacted) part of the same overall effort: for continuum/solid nodes `<flag>` selects BC type (`1`=displacement, `4`=velocity, `6`=acceleration), a node can carry multiple `.inb` records (one per type), and when two records prescribe the same DOF the more dynamic type wins (acceleration > velocity > displacement) even though the lower-priority record's `fixedFlag` still reads `1`. Not derived from the corpus or GUI — confirmed empirically by observing the intended behavior (a base node with a `flag=1` record fixing it at 0 plus a `flag=4`/`flag=6` record referencing a `LOAD_FUN` on the same DOF) actually driving the node as intended rather than staying fixed. This is a different meaning of `<flag>` than the 3D-beam translation/rotation split documented just above it in §8.1 — don't conflate the two.
+
 ## Corpus coverage caveats (applies throughout §7–§13)
 
-Most "typically empty" / "no populated example available" statements in the doc reflect the ~71-file `zsoil_inp_files` corpus plus spot checks in the larger `v26\manual` and `ZSoilPy3\tests` trees — not an exhaustive search. Absence of an example there is evidence of rarity, not proof the marker is unused in general. Markers flagged this way (`.iff`, `.ipg`, `.ivg`, `.ikg`, `.gnl`, `.gbh`, `.brc`, `.pbc`, most of §11.3, most of §13.3, etc.) are good candidates for follow-up if a real project ever populates them — regenerate a minimal GUI example and diff.
+Most "typically empty" / "no populated example available" statements in the doc reflect the ~71-file `zsoil_inp_files` corpus plus spot checks in the larger `v26\manual` and `ZSoilPy3\tests` trees — not an exhaustive search. Absence of an example there is evidence of rarity, not proof the marker is unused in general. Markers flagged this way (`.iff`, `.ipg`, `.ivg`, `.ikg`, `.gnl`, `.gbh`, `.brc`, most of §11.3, most of §13.3, etc.) are good candidates for follow-up if a real project ever populates them — regenerate a minimal GUI example and diff. (`.pbc` was on this list too; no longer — see the dedicated §8.3/§6.5 entry above.)
 
 ## Corrected mistake (kept here as a flag, not in the main doc)
 
