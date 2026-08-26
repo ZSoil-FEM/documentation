@@ -9,6 +9,149 @@ Internal working notes: how each part of the reference was derived, so confidenc
 - A second interactive GUI session against a different live model, `2D_anchor_disp_s1m` at `C:\Mandats\M1366_Geodev\Q&A testing\Unittesting\testing\anchors`, covering the **Continuum** material formulation (material "Soil", `Elastic`) — see the dedicated note below.
 - **ZSoil preprocessor source code** (2026-08, once the user made it available): `C:\Users\mprei\Perforce\GEODEV_MP-LNV-NOV25_2294\v26\ZSoil\Z_Prep3D\` (preprocessor GUI/geometry/element/BC code), `...\v26\ZSoil\zmate\` (material/analysis-control library), `...\v26\ZSoil\H\constant.h` (shared enums). This is the highest-confidence source used so far — actual `.inp`-writing C++, not inference from samples or GUI dialogs. See the dedicated section below for what it resolved/corrected.
 
+## §4.3.1/§4.3.7 `HS-small strain stiffness` — ELAS-> and NONL-> fully field-mapped
+
+User asked to refine the per-continuum-model `NONL->` layouts flagged as a gap in
+`session-progress.md`, specifically HS-small-strain (not Drucker-Prager, which was in progress
+when redirected). Found both writers directly in `zmate`:
+
+- **`NONL->`**: `operator<<(fstream&, DataNonLinearHSSmallStrain&)` (`dataNonLinear.cpp:4361`).
+  Real member names and GUI tooltip strings read straight from `DataNonLinearHSSmallStrain`'s
+  declaration (`dataNonLinear.h:769`) and `::Default()` (`dataNonLinear.cpp:4062`) — e.g.
+  `HS_E_50_ref.SetDouble(25000.0, UNIT_STRESS, "Demanded secant reference E modulus at 50% of
+  qf")`, `HS_H`/`HS_M` explicitly commented `// cap` in the header, `HS_automatic_H_M_eval`
+  defaulting to checked (`SetCheckBox(1, ...)`) — which is exactly why the earlier A/B test saw
+  `H`/`M` change when `ELAS->`'s `m` changed: they're auto-estimated by default, not independent
+  inputs. Version-gated tail (line 4's `KoSR_Setup`/`ApplyM1ForCapHardening`/
+  `CutOffUndrainedShearStrength`, and the Lf/Sdata lines 5-6) transcribed directly from the
+  `if (SaveAsVersionNumber >= X)` guards in the same function.
+- **`ELAS->`**: `operator<<(fstream&, DataElasticHSSmallStrain&)` (`dataElastic.cpp:2182`),
+  class declared `dataElastic.h:217`. Matches the doc's existing example
+  (`80000 0.2 0.5 100 10 0 1 193766 0.0002 2 1 0 90 0 2 1.6`) field-for-field once mapped —
+  confirms both fields the earlier session had only guessed at (`gamma_07`↔"plausibly gamma_0.7",
+  `m`↔ the one A/B-confirmed field) and resolves everything else, including the ver≥23.5
+  anisotropy tail (`Aniso_theta`/`Aniso_phi`/`Anisotropy`/`GhhByGvh`/`Beta` — the trailing `0 90 0
+  2 1.6` in the example, self-consistent as two default orientation angles 0°/90° with anisotropy
+  disabled).
+- Not chased further: the exact enum values for `HS_stress_dependency`'s pre-19.02 vs. post-19.02
+  encoding beyond what's quoted in the doc (both variants exist in source, only the older one was
+  matched against the doc's own example since its version is `9.05`-era... actually this
+  example's own file version wasn't re-checked against the ver≥12.15/19.02 gates — worth a
+  follow-up spot-check against the real source `.inp` if precision on this one field matters).
+## §4.3.7 `Drucker Prager` / `True Mohr-Coulomb` NONL-> — fully field-mapped
+
+Follow-up to the HSS work above, per the user's explicit "continue with Drucker-Prager/True-MC".
+Both share one data struct, `DataNonLinearDP_MC` (`dataNonLinear.h:522`, comment "// for Drucker
+Prager and Mohr-Coulomb" right above it) — own fields `DPAdjust`/`DPxsi`/`NonLocal`, plus the
+common `GlobPhi`/`GlobPsi`/`GlobCoh`/`tensile_cut_off`/`CutOff_Value` inherited from `DataMaterial`
+(same base every other `NONL->`-adjacent struct in this codebase inherits from — `HS-small-strain`
+'s `DataMaterial&` cast is the same pattern).
+
+- **`DataNonLinearDP_MC::operator<<`** (`dataNonLinear.cpp:2303`) — the shared `.inp` writer,
+  used unmodified by `NonLinearGroupDruckerPrager::WriteToFile` (`dataNonLinear.cpp:2533`, a
+  one-line delegate: `file << (DataNonLinearDP_MC&)(*Data)`).
+- **`DPAdjust` enum** (`eexternal=0, einternal=1, eplaneStrain=2, eelastic=3, eintermediate=4`)
+  found at `dataMaterial.h:133`; the writer remaps `eintermediate`(4) to literal `-1` on disk
+  (`tempDPAdj = (DPAdjust.IntValue==4) ? -1 : DPAdjust.IntValue`) — the only case where the
+  extra trailing `DPxsi` field is written. Combo-box label strings confirm the physical meaning:
+  `IDS_ADJ_EXT_EDGES`/`IDS_ADJ_INT_EDGES`/`IDS_ADJ_PS`/`IDS_ADJ_ELAS`/`IDS_ADJ_INTER`.
+- **`NonLinearGroupTrueMC::WriteToFile`** (`dataNonLinear.cpp:2731`) does **not** call the shared
+  `operator<<` — it inlines the same first few fields manually, then appends
+  `DilatancyCutOff`/`eMax`/`NonLocal` (+ a `DataNonlocalContinuum` block if `NonLocal` is set)
+  before the same `Lf`/`Sdata` tail (no `EvolFun` tail observed for True-MC in what was read,
+  unlike Drucker-Prager's, though `WriteDataEvolFun` exists as a separate method — not chased
+  further whether/where it's actually invoked).
+- Confirms `DataNonLinearDP_MC::GetAllFields(..., bool dpMode)`'s branch (`dpMode` ? push
+  `DPAdjust`/`DPxsi` : push `DilatancyCutOff`/`eMax`) — i.e. the GUI only lets you edit one set
+  depending on formulation, but the file always has room for both.
+- **Not resolved**: `NonLinearGroupTrueMC::GiveGroupNlinesCode()`'s actual return value (would
+  confirm total line count precisely) wasn't read; `WriteDataEvolFun`'s call site for True-MC
+  wasn't traced.
+
+## §4.3.7 `Multilaminate` / `Multilam. Menetrey` NONL-> — fully field-mapped
+
+User asked to check the multilaminate model's `NONL->` group next. Two classes:
+`DataMultiLaminate` (`dataNonLinear.h:221`, one lamination plane) and `DataNonLinearMLam`
+(`dataNonLinear.h:244`, holds `ML1, ML2, ML3` — three `DataMultiLaminate` planes — plus
+`AdvancedMLModel`, commented `// DP, MC, HB etc`).
+
+- **Per-plane writer**: `operator<<(fstream&, DataMultiLaminate&)` (`dataNonLinear.cpp:536`) —
+  `alpha, beta, phi, psi, coh, DefFlags, Ft`, 7 fields, confirmed against `Default()`
+  (`dataNonLinear.cpp:448`) which sets the `ValueName`/unit-type strings for each (`alpha`/`beta`
+  are `ANGLE_DEG`, matching "orientation angles"). `DefFlags` bit meanings from the `#define
+  ML_CODE_CUTOFF_FT 1` / `ML_CODE_PLANE_ACTIVE 2` macros right above the class (`dataNonLinear.h:
+  218-219`); confirmed only plane 1 defaults active (`ML1.DefFlags = ML_CODE_PLANE_ACTIVE` in
+  `DataNonLinearMLam::Default`, `dataNonLinear.cpp:606`, planes 2/3 left at the all-zero default).
+- **Three-plane writer**: `operator<<(fstream&, DataNonLinearMLam&)` (`dataNonLinear.cpp:647`) —
+  `file << dat.ML1 SP; file << dat.ML2 SP; file << dat.ML3 SP;`, no `"\n"` anywhere in either this
+  or the per-plane operator — confirmed `SP` is literally `#define SP << "  "`
+  (`dataNonLinear.cpp:61`, two spaces), not a newline macro as it might read at a glance. So all
+  21 fields (3 planes × 7) are one continuous space-separated run, structurally speaking (exact
+  line-wrapping in a real file not checked against a sample).
+- **`AdvancedMLModel` isn't a field in either operator<<** — found where it actually shows up:
+  `NonLinearGroupMLam::WriteToFile` (`dataNonLinear.cpp:795`) writes the `DataNonLinearMLam` block
+  unconditionally, then — `if (Data->AdvancedMLModel) file << (DataNonLinearMenetrey&)(*Data);` —
+  conditionally appends a *full Menetrey block* right after. So the "combined" mode isn't a flag
+  in the record at all; it shows up as extra trailing data, and (per `MATERIAL.CPP:438`, `char*
+  name[] = { "Multilaminate","Multilam. Menetrey" };`) is signaled to the reader via the
+  material's own `<type>` string on the `MATERIAL` record itself (§4.1), not anything inside
+  `NONL->`.
+- **Reuses the still-open Menetrey block**: the appended block is the same
+  `DataNonLinearMenetrey` structure used by `Mohr Coulomb`/`Hoek Brown`/`Rankine`/`Huber Mises`
+  (`NonLinearGroupMenetrey::WriteToFile`, `dataNonLinear.cpp:5620`, `file << (DataNonLinearMenetrey&)
+  (*Data)`) — this was the investigation in progress before being redirected to HSS, then
+  Drucker-Prager/True-MC. Its own field-by-field layout is still not mapped; `NonLinearGroupMenetrey
+  ::WriteData` (`dataNonLinear.cpp:5483`, a *different*, `.dat`-oriented function, not the `.inp`
+  writer — same distinction as elsewhere in this codebase) gives a partial field list by name
+  (`GlobCoh`/`GlobPhi`/`Ft`/`Fc`/`E`/`PlasticFlow`/`GlobPsi`/`Sizeadj`/`Cutoffft(i1)`/`Softwr`/
+  `Softa`/`Softb`) but the *actual* `.inp`-writing `operator<<(fstream&, DataNonLinearMenetrey&)`
+  hasn't been located/read yet — that's the concrete next step if this family is picked up again.
+- Not resolved: exact line-wrapping of the 21-field plane sequence in a real file (no populated
+  multilaminate sample found in the `zsoil_inp_files` corpus to check against).
+
+## §4.3.7 Menetrey-Willam family (Mohr-Coulomb/Hoek-Brown/Rankine/Huber-Mises) and Concrete Plastic Damage — fully field-mapped
+
+Direct continuation, per explicit user request ("Mohr-coulomb, concrete plastic damage and
+hoek-brown need the same treatment") of the Menetrey thread left open in the Multilaminate round.
+
+- **Found the actual class** — it's not in `dataNonLinear.h`/`.cpp` at all, it's in a dedicated
+  file: `MenetreyParam.h`/`.cpp`. `DataNonLinearMenetrey : public MenetreyBaseData`
+  (`MenetreyParam.h:51`) adds no new data members of its own — all 35 fields live in
+  `MenetreyBaseData` (`MenetreyParam.h:15`). The actual `.inp` writer is
+  `operator<<(fstream&, DataNonLinearMenetrey&)` (`MenetreyParam.cpp:893`) — confirmed via the
+  read-side `operator>>` (`MenetreyParam.cpp:918`) matching field-for-field, including the
+  version-gated `fb_by_fc`-vs-`E` swap at the 3rd field (`if (p.GiveVersion() < 9.03f) ... dat.E =
+  Tmp ... else dat.fb_by_fc = Tmp`).
+- **`Mentype`/`TypeMaterial` enum**: `enum { MenHuberMises = 0, MenDruckerPrager, MenRankine,
+  MenMohrCoulomb, MenHoekBrown, MENETREY_MAX }` (`dataMaterial.h:135`). **`PlasticFlow`** enum:
+  `enum { pfDeviatoric = 0, pfDruckerPrager, pfRankine, pfTensileMeridian, pfHoekBrown }`
+  (`dataMaterial.h:134`).
+- **Confirmed the outer `<type>` string is genuinely shared** (not just an earlier guess): all
+  three of `Mohr_Coulomb`/`Hoek_Brown`/`Rankine`'s `MatProperty` entries (`MATERIAL.CPP:417-436`)
+  pass the literal `_T("Menetrey")` as the type string and `_T("PLAS_ME_V")` as the DAT code —
+  the friendly names ("Mohr-Coulomb (M-W)" etc.) are a separate trailing constructor argument
+  used only for the GUI catalog, confirmed never written to `.inp`. So the sub-model is entirely
+  determined by `NONL->`'s own `Mentype` field, not by anything in the `MATERIAL` record's own
+  header lines (§4.1).
+- **Not resolved**: whether `Mentype` and `TypeMaterial` (both present, both apparently using the
+  same 5-value enum) always agree, or serve genuinely different purposes (e.g. one is the
+  originally-configured type, the other the currently-effective one after some remapping) —
+  presented in the doc as two separate fields without asserting they're redundant.
+- **Concrete Plastic Damage**: `DataNonLinearConcreteDamagePlastic` (`dataNonLinear.h:1242`,
+  comment `// for Concrete elastic plastic damage (Lee-Fenves)` / `// CDPM_1_V` right above it) —
+  a flat `UNIT_field CDPM_par[CDPM_NONL_MAX]` array (24 entries) with a fully-named index enum
+  right there in the header. Writer: `operator<<(fstream&, DataNonLinearConcreteDamagePlastic&)`
+  (`dataNonLinear.cpp:7216`) — genuinely wraps at 10 fields/line (`if ((i+1)%10==0) file <<
+  "\n"`), the only NONL-> writer seen in this whole investigation that does real line-wrapping
+  rather than one continuous space-separated run. Field descriptions quoted verbatim from
+  `Default()`'s `SetDouble(..., "description")`/`SetCheckBox(..., "description")` calls
+  (`dataNonLinear.cpp:7027`). Two `MatProperty` entries exist (`MATERIAL.CPP:311`, `:493`) — one
+  `GROUP_ADDITIONAL` labeled "for shell" (likely a 2nd-`NUM_MATERIALS=`-pass layer-material
+  option alongside `Fiber Shell`/`Orthotropic shell`, §4.4) and one `GROUP_CONTINUUM` — both share
+  the same `NonLinearGroupConcreteDamage`/DAT code `CDPM_1_V`. The shell variant's relationship to
+  the existing `Fiber Shell`/`Orthotropic shell` §4.4 mechanism wasn't chased further — worth a
+  follow-up if that specific formulation matters.
+
 ## Corpus spot-check (`zsoil_inp_files`) — resolved the `.inb`/`.iwb` open question, plus sanity checks
 
 User asked to check the real sample corpus at

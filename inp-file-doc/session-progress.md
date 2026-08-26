@@ -92,15 +92,60 @@ mechanism is what's actually used, not `.iwb`. Also empirically confirmed a vers
 citations; `verification-notes.md` has the full trace including what's still not fully pinned
 (the exact meaning of `.gwb`'s 3rd/4th header fields).
 
+## Round 6 — `HS-small strain stiffness` ELAS-> and NONL-> fully field-mapped
+
+User asked to refine the per-continuum-model `NONL->` layouts flagged below, redirected from
+Drucker-Prager to HS-small-strain specifically. Both `ELAS->` (`dataElastic.cpp:2182`,
+`DataElasticHSSmallStrain`) and `NONL->` (`dataNonLinear.cpp:4361`,
+`DataNonLinearHSSmallStrain`) are now fully field-mapped with real member names, GUI tooltip
+strings, and version-gating — resolves the doc's earlier "partial confidence" guesses entirely,
+including confirming `gamma_07` and explaining why `H`/`M` (cap parameters) showed up as
+"auto-derived" in an earlier A/B test (`automatic_H_M_eval` defaults to on). §4.3.1/§4.3.7
+rewritten with full field tables. See `verification-notes.md` for exact citations and one
+loose end (the `HS_stress_dependency` version-gate boundary wasn't re-checked against the
+example's own file version).
+
+## Round 7 — `Drucker Prager` / `True Mohr-Coulomb` NONL-> fully field-mapped
+
+Continuation of Round 6 per explicit user request. Both share one data struct
+(`DataNonLinearDP_MC`, `dataNonLinear.h:522`) and mostly one writer
+(`dataNonLinear.cpp:2303`) — `DPAdjust` (DP-cone-to-MC-hexagon fitting mode, 5 named options),
+φ/ψ/c, a tension-cutoff pair, and version-gated Lf/Sdata/EvolFun tails. True Mohr-Coulomb
+overrides the writer to append its own dilatancy-cutoff and nonlocal-regularization fields
+instead of relying purely on the DP fitting scheme. §4.2 and §4.3.7 updated; `verification-notes.md`
+has full citations and two small loose ends (exact True-MC line count, `WriteDataEvolFun`'s call
+site).
+
+## Round 8 — `Multilaminate` / `Multilam. Menetrey` NONL-> fully field-mapped
+
+Continuation, per explicit user request ("check out the NONL group of multilaminate model").
+3 discrete lamination planes (`DataMultiLaminate`, `dataNonLinear.h:221`), each 7 fields
+(`alpha, beta, phi, psi, coh, DefFlags, Ft`), written back to back with no line breaks (`SP` is
+literally `<< "  "`, confirmed — easy to misread as a newline macro). The "combined with a global
+criterion" (`Multilam. Menetrey`) variant isn't a flag inside the record at all — it's a whole
+extra Menetrey block appended after, gated by `AdvancedMLModel` and signaled via the material's
+own `<type>` string. This directly reopens the Menetrey-family investigation (Mohr-Coulomb/
+Hoek-Brown/Rankine/Huber-Mises) as the natural next step — its `.inp`-writing `operator<<` wasn't
+actually located this round, only a `.dat`-oriented `WriteData` giving partial field names.
+§4.2/§4.3.7 updated; full trace and the concrete next step in `verification-notes.md`.
+
 ## Known remaining gaps (not yet chased)
 
 From the plan's "explicitly not resolved" list, still open:
 - `T3D_PARAM_*` literal enum values (ordering confirmed via `constant.h`, values themselves not
   needed since ordering is what matters for field position).
-- Per-continuum-model `NONL->` field layouts (Mohr-Coulomb, Hoek-Brown, Drucker-Prager, Cam-Clay,
-  Hujeux, HS-small-strain, Duncan-Chang, Cap model) — classes located
-  (`Mohr_Coulomb.cpp`, `Hoek_Brown.cpp`, etc., all `GenericNonLinearGroup` subclasses in
-  `dataNonLinear.h`) but not individually field-mapped.
+- Per-continuum-model `NONL->` field layouts still open: Cam-Clay, Hujeux, Duncan-Chang, Cap
+  model — classes located (`NonLinearGroupCamClay`, `NonLinearGroupHujeux`,
+  `NonLinearGroupDuncanChang`, `NonLinearGroupCapModel`, all in `dataNonLinear.h`) but not
+  individually field-mapped. **Done**: `HS-small-strain` (Round 6, `ELAS->`+`NONL->`), `Drucker
+  Prager`/`True Mohr-Coulomb` (Round 7, `NONL->`), `Multilaminate`/`Multilam. Menetrey` (Round 8,
+  `NONL->`), and the Menetrey-Willam family — `Mohr-Coulomb`/`Hoek-Brown`/`Rankine`/`Huber-Mises`
+  — plus `Concrete elastic plastic damage` (Round 9, `NONL->` fully field-mapped for all of
+  these). Mohr-Coulomb/Hoek-Brown/Rankine/Huber-Mises/Drucker-Prager/True-MC/Multilaminate share
+  `E`/`nu`-only `ELAS->` already documented generically under plain continuum `Elastic`. Concrete
+  Plastic Damage uses `ElasticGroupFire` (per `MATERIAL.CPP`) — not yet checked whether that's
+  the same as `Fiber Shell`'s `FIRE_DATABASE`-prefixed `ELAS->` or something distinct; flagged
+  rather than assumed.
 - `.pil`'s `code` field, `.icg`'s `genFullContinuity` *setter* semantics (declared/written, no
   setter/enum found in this checkout).
 - Beam-material `INIS->` (continuum's is fully resolved; beam's isn't located).

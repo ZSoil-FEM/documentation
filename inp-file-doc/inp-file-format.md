@@ -442,7 +442,12 @@ ZSoil organizes every material by **Continuum/Structure type** (which element gr
 |---|---|---|---|
 | Continuum (`Q4`/`B8`/`T3`, §7.1) | `Elastic` | `ELAS->` `GEOM->` `DENS->` `FLOW->` `CREEP->` `NONL->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | `Elastic`, `Unit weights`, `Flow`, and `Initial Ko State` checkboxes present in the GUI; `Creep` present but unchecked; no `Non linear` option (no plasticity model). |
 | Continuum | `HS-small strain stiffness` (short name `HSS` in the `<name>` line's own conventional use, though `<name>` is free text) | same tag set as `Elastic`, `NONL->` populated | Hardening-Soil-type nonlinear/stress-dependent stiffness model with a small-strain plateau. See §4.3.1/§4.3.7 for confirmed `ELAS->`/`NONL->` field detail. |
-| Continuum | *(other nonlinear soil models: Mohr-Coulomb, Hoek-Brown, Rankine, Huber-Mises, Drucker-Prager, Duncan-Chang, Cap model, Cam-Clay, Hujeux)* | same tag set, `NONL->` populated | Each is a distinct model class internally, but several (Mohr-Coulomb/Hoek-Brown/Rankine) share one umbrella `<type>` string family (`Menetrey`) rather than each having a unique literal — the exact `<type>` text per model and their `NONL->` field layouts are not documented here. |
+| Continuum | `Drucker Prager` | same tag set, `NONL->` populated | Fits a DP cone to the Mohr-Coulomb hexagon — see §4.3.7 for the fitting-mode field. |
+| Continuum | `True Mohr-Coulomb` | same tag set, `NONL->` populated | The actual MC hexagonal criterion (not a DP approximation) — see §4.3.7. |
+| Continuum | `Multilaminate` / `Multilam. Menetrey` | same tag set, `NONL->` populated | Discrete-lamination-plane model — up to 3 planes, each with its own friction/dilatancy/cohesion/tension strength; the `Menetrey` variant adds a combined global failure criterion on top. See §4.3.7. |
+| Continuum | `Mohr-Coulomb` / `Hoek-Brown` / `Rankine` / `Huber-Mises` (the "Menetrey-Willam" family) | same tag set, `NONL->` populated | **All four share the literal `<type>` string `"Menetrey"`** (DAT code `PLAS_ME_V`) — the GUI's friendly catalog names ("Mohr-Coulomb (M-W)" etc.) are display-only and never written to the file. Which of the 4 a given material actually is lives entirely inside its `NONL->` block's own `Mentype` field — see §4.3.7. |
+| Continuum | *(other nonlinear soil models: Duncan-Chang, Cap model, Cam-Clay, Hujeux)* | same tag set, `NONL->` populated | Distinct model classes, not yet field-mapped. |
+| Continuum / shell fiber layer | `Concrete elastic plastic damage` / `Concrete elastic plastic damage for shell` | same tag set, `NONL->` populated | Lee-Fenves concrete damage-plasticity model (DAT code `CDPM_1_V`) — see §4.3.7. |
 | Beams (`BEL2`, §7.2) | `Elastic Beam` (plain) | `ELAS->` `GEOM->` `MAIN->` `DENS->` `FLOW->` `CREEP->` `NONL->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | `GEOM->` selects Profiles/User/Values cross-section (§4.3.2). |
 | Beams | `Elastic Beam` (layered/composite) | same tag set; `GEOM->` carries embedded reinforcement fibers | Same type *string* as plain `Elastic Beam` — distinguished only by `BUTTONS=`'s `Non linear` flag, index 6, repurposed as an `IsLayeredCrossSection` selector (§4.3.2). Fibers reference `LAYERED_BEAM_COMPONENTS` (§4.4). |
 | Trusses (`TRS2`/`LNK2`, §7.3) | `Truss/Cable` | `ELAS->` `GEOM-><area>` `MAIN->` `DENS->` `FLOW->` `CREEP->` `NONL->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | Only the numeric sub-tag content is documented, via the element's `mat` reference. |
@@ -463,13 +468,125 @@ This subchapter documents each sub-tag once, covering every formulation-specific
 | Beam `Elastic Beam` (plain or layered) | `<E> <nu> <1>` + 2 more lines, unknown | `ELAS-> 200000000  0.3  1` / `0  0` / `0  0` |
 | `Fiber Shell` | `<E>` only — the material only takes a single Young's modulus; the file still stores a second value (`nu`), presumably unused for this uniaxial fiber model | `ELAS-> 2e+08  0.3` / `0  0` ×2 |
 | `Orthotropic shell` | `<E1> <E2> <nu12> <G0>` — `E1`, `E2` `[kN/m²]`, `ν12`, `G0` `[kN/m²]` | `ELAS-> 2.7e+07  2.7e+07  0.2  1.1e+07` / `0 0 0 0` ×2 |
-| Continuum `HS-small strain stiffness` | `<G0_ref> <nu_ur> <m> <pref> ...` (14+ fields, first line only) + 3 more lines like the plain `Elastic` continuum case | `ELAS-> 80000  0.2  0.5  100  10  0  1  193766  0.0002  2  1  0  90  0  2  1.6` |
+| Continuum `HS-small strain stiffness` | see field table below | `ELAS-> 80000  0.2  0.5  100  10  0  1  193766  0.0002  2  1  0  90  0  2  1.6` |
 
 The secondary lines for Continuum/Beam are not anisotropy or damping data — they're a load-function ref, a spatial-data ref, and (ver≥16.95) an evolution-function ref for `E`/`nu`, i.e. `E.Lf nu.Lf` / `E.Sdata nu.Sdata` / `E.EvolFun nu.EvolFun`; all `0`/unset in every model seen so far. Note `"Orthotropic shell"`'s material type string is lower-case `"shell"`, inconsistent with `"Shell Layered"`/`"Fiber Shell"`'s capitalization elsewhere in the format.
 
-**`HS-small strain stiffness` `ELAS->` field detail (partial confidence — see verification-notes.md):** only field 3 (**`m`**, the stress-dependent-stiffness exponent, i.e. stiffness scales as `(sigma'/pref)^m`) is independently confirmed, via a controlled A/B test — two otherwise-byte-identical `.inp` files differing only in the GUI's "pressure-independent" toggle produced files identical except for this one field (`0.5` → `0`) and two auto-derived values in the following `NONL->` block. Field 1 is plausibly `G0_ref` `[kN/m²]` (the small-strain reference shear modulus) and field 2 plausibly `nu_ur` (unload-reload Poisson's ratio) by position/value-magnitude analogy to the standard Hardening-Soil-small parameter set, but neither was isolated by its own A/B test — treat as a reasonable guess, not confirmed. Field 4 (`100`) is plausibly `pref` (reference stress). Remaining fields (10, 0, 1, 193766, 0.0002, 2, 1, 0, 90, 0, 2, 1.6) not decoded; field 9 (`0.0002`) is plausibly `gamma_0.7` (the small-strain threshold shear strain, standard HS-small parameter) by order-of-magnitude match to typical values, also not isolated.
+**`HS-small strain stiffness` `ELAS->` — fully field-mapped**:
 
-**`NONL->` for `HS-small strain stiffness`:** unlike plain continuum `Elastic` (where `NONL->` is always empty), this formulation populates it — first numeric line has at least 2 values that are auto-derived from the `ELAS->` block (confirmed: changing `ELAS->`'s `m` field alone changes both, `35940.9 1.028...` → `44429.5 1.265...` in the A/B test above) rather than independently specified. Not decoded further; likely auto-computed secondary stiffness parameters (by analogy to numgeo's own Hardening-Soil formulation, which auto-derives an initial-stiffness parameter unless given explicitly — see `../../../../M100/papers/NUMGE2027/calc/numgeo/shear_column_hss/README.md` for that independent, unrelated-codebase confirmation of the same general HS-family behavior).
+| # | Field | Notes |
+|---|---|---|
+| 1 | `E_ur_ref` | Unload-reload reference modulus |
+| 2 | `v_ur` | Unload-reload Poisson's ratio |
+| 3 | `m` | Stress-dependency exponent — stiffness scales as `(σ'/pref)^m` |
+| 4 | `sig_ref` | Reference stress `pref` |
+| 5 | `sigL` | |
+| 6 | `explicit_mode` | Unused |
+| 7 | `ELAS_advanced_setup` | Flag |
+| 8 | `E_o_ref` | Small-strain reference modulus `E0ref`/`G0ref` |
+| 9 | `gamma_07` | Small-strain threshold shear strain `γ0.7` |
+| 10 | `small_strain_mode` | `0`=disabled, `1`=Benz formulation, `2`=Brick formulation |
+| 11 | `stress_dependency` | Stiffness stress-dependency basis (ver≥12.15 only); older files: `0`=σ₃-based, `1`=p-based |
+| 12–16 | anisotropy block (ver≥23.5 only) | `Aniso_theta`, `Aniso_phi` (orientation angles, ver≥24.05) or a legacy placeholder pair; `Anisotropy` (enable flag); `GhhByGvh`; `Beta` |
+
+Matches the example exactly: `E_ur_ref`=80000, `v_ur`=0.2, `m`=0.5, `sig_ref`=100, `sigL`=10, `explicit_mode`=0, `advanced_setup`=1, `E_o_ref`=193766, `gamma_07`=0.0002, `small_strain_mode`=2 (Brick), `stress_dependency`=1, then the anisotropy block `0 90 0 2 1.6` (angles 0°/90°, anisotropy disabled, `GhhByGvh`=2, `Beta`=1.6).
+
+**`NONL->` for `HS-small strain stiffness` — fully field-mapped**:
+
+| Line | Fields | Notes |
+|---|---|---|
+| 1 | `GlobPhi GlobPsi GlobCoh E_50_ref Rf D D_small_strain DilatancyCutOff eMax explicit_sin_psi` | friction angle φ, dilatancy angle ψ, cohesion c, secant reference modulus `E50ref`, failure ratio `Rf`, Rowe's-dilatancy-law multipliers `D`/`D_small_strain`, a cutoff flag, max void ratio, and an unused legacy field |
+| 2 | `H M KoNC sig_ref_oed E_oed` | **cap parameters** `H`/`M` — auto-derived from the `ELAS->` block unless overridden (this is what the A/B test below actually observed changing) — then `K0^NC`, reference oedometer stress, oedometer tangent modulus `Eoed` |
+| 3 | `tensile_cut_off CutOff_Value` | flag + value |
+| 4 | `init_state_def_method pco_min POP OCR KoSR NONL_advanced_setup automatic_H_M_eval [KoSR_Setup (ver≥13.02)] [ApplyM1ForCapHardening CutOffUndrainedShearStrength (ver≥24.05)]` | initial-state method (`0`=OCR-based, `1`=qPOP-based), min preconsolidation stress, preoverburden pressure, OCR, `K0` stress ratio, and flags |
+| 5–6 (ver-gated) | `Lf` refs then `Sdata` refs for `GlobPhi/GlobPsi/GlobCoh/E_50_ref/H/M/E_oed` | only on ver≥14.14/16.01 (Lf line) and ver≥19.01 (Sdata line) |
+
+`H`/`M` (line 2) are the two auto-derived values an earlier A/B test observed changing when `ELAS->`'s `m` changed (`35940.9 1.028...` → `44429.5 1.265...`) — now confirmed as the model's cap-yield-surface parameters, auto-estimated whenever `automatic_H_M_eval` (line 4) is on (the GUI default).
+
+**`NONL->` for `Drucker Prager` and `True Mohr-Coulomb` — fully field-mapped** (both share one underlying record shape; True Mohr-Coulomb adds a few fields of its own):
+
+| Line | Fields | Notes |
+|---|---|---|
+| 1 | `DPAdjust GlobPhi GlobPsi GlobCoh tensile_cut_off CutOff_Value [DPxsi]` | `DPAdjust` — the DP-cone-to-MC-hexagon fitting mode: `0`=external edges, `1`=internal edges, `2`=plane strain, `3`=elastic (associated?), `-1`=intermediate (user-defined, only case where the trailing `DPxsi` field is present, range `[-1.5, 1.0]`). Then friction angle φ, dilatancy angle ψ, cohesion c, a tension-cutoff flag, and its value. |
+| 1 (True MC only, appended) | `DilatancyCutOff eMax NonLocal [nonlocal-continuum block if NonLocal≠0]` | dilatancy-cutoff flag + max void ratio (mutually exclusive with `DPAdjust`/`DPxsi` in the GUI, but both field groups are still present in the record for this formulation), then a nonlocal/regularization enable flag and its data block |
+| 2 | `GlobPhi.Lf GlobPsi.Lf GlobCoh.Lf CutOff_Value.Lf` | load-function refs |
+| 3 | `GlobPhi.Sdata GlobPsi.Sdata GlobCoh.Sdata CutOff_Value.Sdata` | spatial-data refs |
+| 4 (Drucker Prager only, ver≥13.08) | `GlobPhi.EvolFun GlobPsi.EvolFun GlobCoh.EvolFun CutOff_Value.EvolFun` | evolution-function refs |
+
+Since `Drucker Prager` is a DP-cone fit to the MC hexagon, its `DPAdjust` field is the practically important one (which fitting scheme the cone uses is a real modeling choice); `True Mohr-Coulomb` implements the actual hexagonal criterion directly, so its own extra fields are about dilatancy limiting and nonlocal regularization instead.
+
+**`NONL->` for `Multilaminate` / `Multilam. Menetrey` — fully field-mapped**: a **discrete-lamination-plane** model — instead of one global yield surface, up to 3 independent planes at fixed orientations, each able to yield/slip on its own. One continuous space-separated sequence, no embedded line breaks, of 3 plane records back to back:
+
+```
+<alpha1> <beta1> <phi1> <psi1> <coh1> <DefFlags1> <Ft1>  <alpha2> <beta2> ... (×3 planes total)
+```
+
+Per plane (7 fields): `alpha`/`beta` — the plane's orientation angles `[deg]`; `phi`/`psi`/`coh` — friction angle, dilatancy angle, cohesion; `DefFlags` — a bitmask, bit `1`=tension-cutoff active, bit `2`=this plane is active/enabled (only plane 1 is active by default); `Ft` — tension strength. **If the material's `AdvancedMLModel` setting is on** (matching the `"Multilam. Menetrey"` type string rather than plain `"Multilaminate"`) **a full Menetrey-family block is appended right after** the 21-field plane sequence — the same block documented next, letting a multilaminate material combine its discrete planes with one global continuum failure criterion.
+
+**`NONL->` for `Mohr-Coulomb` / `Hoek-Brown` / `Rankine` / `Huber-Mises` (Menetrey-Willam family) — fully field-mapped.** One continuous space-separated line, 35 fields, no embedded line breaks:
+
+```
+Aphi Apsi fb_by_fc Fc Ft K Cutoffft Cutoffi1 Cutoffftflag Cutoffi1flag GlobCoh GlobPhi GlobPsi Sizeadj Soft Softa Softb Softwr Mentype Dpadjust Xsi PlasticFlow Af Bf Cf mf ef cf Ag Bg Cg mg eg TypeMaterial TypeAdj
+```
+
+Most of this record is **internal Menetrey-Willam failure-surface shape coefficients auto-derived from a handful of real inputs**, not independent user data — which fields are the meaningful inputs depends on which sub-model (`TypeMaterial`/`Mentype`) is active:
+
+| Field(s) | Meaning |
+|---|---|
+| `Aphi`, `Apsi` | internal shape parameters derived from friction/dilatancy angle |
+| `fb_by_fc` | biaxial-to-uniaxial compressive strength ratio (files saved with ZSoil <9.03 store `E` — Young's modulus — in this position instead) |
+| `Fc`, `Ft` | compressive / tensile strength (meaningful for Hoek-Brown, Huber-Mises; Rankine uses `Ft` only) |
+| `K` | deviatoric shape/roundness factor |
+| `Cutoffft`, `Cutoffi1`, `Cutoffftflag`, `Cutoffi1flag` | tension cutoff and I₁ (mean-stress) cutoff values + their enable flags |
+| `GlobCoh`, `GlobPhi`, `GlobPsi` | cohesion, friction angle, dilatancy angle (meaningful for Mohr-Coulomb) |
+| `Sizeadj`, `Soft`, `Softa`, `Softb`, `Softwr` | size-adjustment flag, softening-enable flag, and softening curve parameters |
+| `Mentype` | **which of the 4 sub-models this material actually is** — `0`=Huber-Mises, `1`=Drucker-Prager (a 5th Menetrey-internal option, distinct from the standalone `Drucker Prager` formulation above), `2`=Rankine, `3`=Mohr-Coulomb, `4`=Hoek-Brown |
+| `Dpadjust`, `Xsi` | same DP-cone fitting mode / intermediate-mode parameter as standalone `Drucker Prager`'s `DPAdjust`/`DPxsi` (§4.3.7 above), reused here since some Menetrey sub-models are internally DP-based |
+| `PlasticFlow` | flow-rule selector: `0`=deviatoric, `1`=Drucker-Prager, `2`=Rankine, `3`=tensile meridian, `4`=Hoek-Brown |
+| `Af,Bf,Cf,mf,ef,cf` | Menetrey-Willam shape coefficients for the **failure** surface (auto-derived) |
+| `Ag,Bg,Cg,mg,eg` | Menetrey-Willam shape coefficients for the **plastic-potential** surface (auto-derived) |
+| `TypeMaterial` | the effective/active sub-model selector (same 5-value set as `Mentype` — the two aren't fully disambiguated from source alone; see `verification-notes.md`) |
+| `TypeAdj` | adjustment-type selector, overlapping in role with `Dpadjust` |
+
+**`NONL->` for `Concrete elastic plastic damage` (Lee-Fenves model) — fully field-mapped.** Starts with the same `FIRE_DATABASE <flag> <mode>` prefix as `Fiber Shell` (§4.3.7 above), then (ver≥17.50) a `UseSecantSitiffness` flag line, then a **24-field parameter array**, then the same 24 fields repeated 3 more times for `Lf`, `Sdata`, and (ver≥16.96) `EvolFun` references — every one of the 4 repetitions wrapped **10 fields per line**:
+
+```
+NONL-> FIRE_DATABASE 0 OFF
+1
+<24 values, 10 per line>
+<24 Lf refs, 10 per line>
+<24 Sdata refs, 10 per line>
+<24 EvolFun refs, 10 per line>
+```
+
+The 24 parameters, in order (index 0–23), with GUI tooltip text quoted where the name alone isn't self-explanatory:
+
+| # | Field | Notes |
+|---|---|---|
+| 0 | `eps_c1` | strain at peak on the compressive σ-ε curve |
+| 1 | `fcm` | uniaxial compressive strength |
+| 2 | `fc0_by_fcm` | initial (yield) compressive strength ratio `fc0/fc` |
+| 3 | `sig_dam_by_fcm` | compressive damage-activation stress level |
+| 4 | `fcbo_by_fco` | biaxial-to-uniaxial compressive strength ratio |
+| 5 | `Gc` | compressive fracture energy |
+| 6 | `sig_c_bar_by_fc` | reference stress level for compressive calibration |
+| 7 | `Dc_bar` | damage value at that reference stress level |
+| 8 | `c_estim_option` | compressive-parameter estimation procedure (combo: preserve `Gc`+`Dc_bar` / `Gc`+`eps_c1` / `eps_c1`+`Dc_bar`) |
+| 9 | `ft` | uniaxial tensile strength |
+| 10 | `Gt` | tensile fracture energy |
+| 11 | `sig_t_bar_by_ft` | reference stress level for tensile calibration |
+| 12 | `Dt_bar` | damage value at that reference stress level |
+| 13 | `so` | stiffness-recovery factor |
+| 14 | `dilatancy` | dilatancy type: `1`=constant, `2`=variable |
+| 15 | `sig_dil_by_fcm` | compressive dilatancy-activation stress level |
+| 16 | `alpha_po` | tensile dilatancy parameter |
+| 17 | `alpha_p` | compressive dilatancy parameter |
+| 18 | `epso_betaH` | yield-surface apex smoothing parameter |
+| 19 | `vp_flag` | viscoplasticity enable flag |
+| 20 | `viscosity` | viscous (relaxation-time) parameter |
+| 21 | `lc_c` | characteristic length / sample size, compression |
+| 22 | `lc_RC_flag` | "enforce characteristic length for RC structures" flag |
+| 23 | `lc_RC` | that enforced characteristic length value |
 
 #### 4.3.2 `GEOM->` — geometry/cross-section
 
@@ -588,7 +705,7 @@ Line 1 is `<ft> <fc> <ft0/ft> <fc0/fc> <eps_y> <eps_u> <eps_e>`: **`ft`** (tensi
 
 **Continuum**: `<Ko(x')> <Ko(z)> <angle> <mx> <my> <mz> <vx> <vy> <vz> <EvaluateKo> <KoCutOffFlag> <KoCutOff>` — e.g. `0.385  0.385  0  1  0  0  0  1  0  0  0  1`. Fields 1–3 are the **initial Ko (at-rest earth pressure) state**: **Ko(x′)**, **Ko(z)**, then the **inclination angle ⟨x′,x⟩** `[deg]` (here `0.385`, `0.385`, `0` — a 2D model with equal, isotropic Ko in both directions and no inclination). Fields 4–9 are the same `m`/`v` orientation-vector pair seen in `FLOW->` (§4.3.5), defaults `(1,0,0)`/`(0,1,0)`. Field 10 is `EvaluateKo` (ver≥16.04, auto-Ko-from-OCR flag), field 11 `KoCutOffFlag` (ver≥23.53, "use upper limit" flag), field 12 `KoCutOff` (ver≥24.08, the limit value) — here `0`, `0`, `1`.
 
-Same field shape seen in a `HS-small strain stiffness` continuum material (`INIS-> 0.5  0.5  0  1  0  0  0  1  0  1  0  1`, from the NUMGE2027 project) — consistent with the same Ko(x′)/Ko(z)/inclination convention by structural match, though not independently re-confirmed via the GUI for this specific formulation. Notably, a model using this `INIS->` line ran its dynamic step directly from this initial state with **no separate `*Geostatic`-type consolidation driver** beforehand (unlike numgeo, which needs one for its own stress-dependent-stiffness material) — consistent with (but not proof of) `INIS->`'s Ko values being applied as the starting stress state automatically, without a dedicated solve step. Worth a GUI-confirmation pass if this matters for a future model.
+Same field shape seen in a `HS-small strain stiffness` continuum material — consistent with the same Ko(x′)/Ko(z)/inclination convention by structural match, though not independently re-confirmed via the GUI for this specific formulation. Notably, a model using this `INIS->` line ran its dynamic step directly from this initial state with **no separate `*Geostatic`-type consolidation driver** beforehand (unlike numgeo, which needs one for its own stress-dependent-stiffness material) — consistent with (but not proof of) `INIS->`'s Ko values being applied as the starting stress state automatically, without a dedicated solve step. Worth a GUI-confirmation pass if this matters for a future model.
 
 **Beam**: e.g. `INIS-> 1  1  0  1  0  0  0  1  0  0  0  1` — same 12-field shape as continuum, but the first 3 fields (Ko-related for continuum) are presumably not applicable/ignored for a beam; not independently confirmed. Remaining fields *(meaning unclear)*.
 
