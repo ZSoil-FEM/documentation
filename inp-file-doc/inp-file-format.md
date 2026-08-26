@@ -19,8 +19,9 @@ This document describes the structure and syntax of the ZSoil `.inp` input file,
 11. [Initial Conditions](#11-initial-conditions)
 12. [Reinforcement](#12-reinforcement)
 13. [Mesh Tying & Domain Reduction](#13-mesh-tying--domain-reduction)
-14. [Quick Reference](#14-quick-reference)
-15. [Worked Example](#15-worked-example)
+14. [Other Data](#14-other-data)
+15. [Quick Reference](#15-quick-reference)
+16. [Worked Example](#16-worked-example)
 
 Field-level documentation quality varies by section. Where a field's exact meaning is unknown — mostly opaque numeric solver-tuning parameters — it is marked explicitly rather than guessed; treat unmarked fields as reliable and marked ones as needing independent verification if precision matters.
 
@@ -53,7 +54,7 @@ The file is plain text. Records are whitespace-delimited (fields separated by sp
 
 Every data block in the body of the file is introduced by a marker line. Two marker styles are used:
 
-- **Dot-prefixed markers**, e.g. `.ing`, `.i0g`, `.inb` — historically named after the companion file extension that used to hold that data. There are **91 distinct dot-prefixed markers**, always appearing in the same fixed order (see [§14 Quick Reference](#14-quick-reference) for the complete list). Every marker is present in every file, even when its block is empty — an empty block is simply the marker line followed immediately by a blank line (or, for count-terminated blocks, a `0` count).
+- **Dot-prefixed markers**, e.g. `.ing`, `.i0g`, `.inb` — historically named after the companion file extension that used to hold that data. There are **91 distinct dot-prefixed markers**, always appearing in the same fixed order (see [§15 Quick Reference](#15-quick-reference) for the complete list). Every marker is present in every file, even when its block is empty — an empty block is simply the marker line followed immediately by a blank line (or, for count-terminated blocks, a `0` count). **Mechanism, confirmed from source**: each marker's data is actually assembled from a separate per-extension fragment file (e.g. `<basename>.idg`), all listed by name in an external config file (`CFG\prepro.fil`, loaded once at startup into an in-memory list) and concatenated in that fixed order into the final `.inp`. A step that runs before every save (`ZMATE_CreateNoExistingPreproFile`) blanket-creates an *empty* fragment file for any extension in that list that no other code path has already written to — which is exactly why some markers (e.g. `.idg`, see §15.1) are present in every real file yet have no dedicated writer/reader anywhere in the source: nothing in the current codebase actually populates them, they just always exist as empty placeholders.
 - **Plain-keyword markers**, e.g. `NUM_MATERIALS=`, `EXIST_FUNC`, `LOAD_FUN`, `CONTROL`, `LAYERED_BEAM_COMPONENTS` — used in the header/materials portion of the file, before the dot-marker sequence begins.
 
 ### 2.3 Block termination styles
@@ -81,7 +82,7 @@ Several element sections carry a short type tag identifying the element's shape/
 | `C_L2` | Contact/interface element on a line |
 | `SPL2` | 2-node seepage element |
 
-### 2.5 Existence functions (EF) and Load functions (LF)
+### 2.5 Existence functions (EF), Load functions (LF), and Unloading functions (ULF)
 
 Nearly every element, load, and mass record references an **existence function number (EF)** and, where relevant, a **load function number (LF)** — these are defined once (in `EXIST_FUNC` / `LOAD_FUN`, [§5](#5-existence--load-functions)) and referenced by number everywhere else in the file:
 
@@ -89,6 +90,8 @@ Nearly every element, load, and mass record references an **existence function n
 - **LF 0** is implicit and equal to a constant multiplier of 1 — used by anything not subject to a time-varying load history.
 - Any other EF/LF number must be defined in the corresponding `EXIST_FUNC`/`LOAD_FUN` block earlier in the file.
 - An EF reference isn't only used to control whether an *element* exists — it can also gate a boundary condition's fixity, letting a `.inb` record stay nominally fixed while only actually being enforced during that EF's active interval (see §8.1 for how a `.inb` fixity block references an EF this way).
+
+Every element/material record's own trailing block also carries an **unloading function (ULF)** field alongside its `EF` — this references a `LOAD_FUN` entry by number too, the same list as `LF`, just used in a different *role*: while `LF` drives a quantity's value as it's applied/loaded, `ULF` governs its value during an unloading/deactivation transition (e.g. when the element or BC leaves its `EF` interval). `0` means no unloading function assigned. No sample file inspected so far uses a non-zero `ULF`, so its behavior in practice isn't documented here beyond this.
 
 ### 2.6 Compact element-list notation
 
@@ -144,7 +147,7 @@ Lines 2–136 are a fixed, always-135-line sequence of `<count> # <description>`
 | 20 | number of interfaces (`.ics`) |
 | 21 | number of water Seepage's (`.ipg`, `.ipm`) |
 | 22 | number of convection elements (`.ivg`) |
-| 23 | number of viscous dampers (`.vsd`) |
+| 23 | number of viscous dampers (`.vsd`) — the label's own cited extension is stale; the actual markers written are `.ivd`/`.svd` (§13.4) |
 | 24 | number of boundary conditions (`.inb`) |
 | 25 | number of surface elements (`.pbc`) |
 | 26 | number of water bound. cond. (`.iwb`) |
@@ -203,7 +206,7 @@ Lines 2–136 are a fixed, always-135-line sequence of `<count> # <description>`
 | 79 | number of mesh tying elements |
 | 80 | number of beam loads |
 | 81 | number of boreholes |
-| 82 | number of initial velocities/accelerations |
+| 82 | number of initial velocities/accelerations (`.idv`, §11.4) |
 | 83 | number of shell hinges |
 | 84 | number of beam reinforcements |
 | 85 | number of data super elements |
@@ -221,7 +224,7 @@ Lines 2–136 are a fixed, always-135-line sequence of `<count> # <description>`
 | 97 | number of Heat Exchanger heat fluxes |
 | 98–135 | *"Not used" — reserved* |
 
-*(Field indices above are relative to this table, not raw file line numbers. Entries 33, 49, and 88 have no functional label but are followed by an unrelated, oddly duplicated-looking label in some files — a quirk of the format itself.)*
+*(Field indices above are relative to this table, not raw file line numbers. Entries 33, 49, and 88 are genuine upstream labeling bugs, not fields with an undocumented separate meaning: the writer prints one description string per field from a fixed array, and for these three the array slot was left at its default "Not used" (entry 33) or accidentally duplicates a neighboring field's description (entry 49 duplicates entry 48's "number of element masses" label; entry 88 duplicates entry 86's "number of Tendons" label) — the underlying count fields are real and populated, only their printed labels are wrong.)*
 
 ### 3.3 Associated projects and units
 
@@ -264,14 +267,14 @@ After the units block, a fixed sequence of named control blocks follows. The gen
 | 2 | Tolerance for solid-phase energy | `0.001` |
 | 3 | Tolerance for fluid-phase RHS | `0.01` |
 | 4 | Tolerance for fluid-phase energy | `0.001` |
-| 5 | Nonlinear solver: `1`=Full Newton-Raphson, `2`=BFGS, `3`=Initial stiffness, `4`=Modified N-R, `5`=Initial stiffness (accelerated) | `1` |
+| 5 | Nonlinear solver `ALGOID`: `1`=Full Newton-Raphson, `2`=BFGS, `3`=Initial stiffness, `4`=Modified N-R, `5`=Symmetric Full N-R, `6`=Initial stiffness (accelerated) | `1` |
 | 6 | Max. number of iterations per step | `15` |
 | 7 | Reform stiffness every *n* steps (Modified N-R) | `1` |
 | 8 | Reform stiffness every *n* iterations (Modified N-R) | `1` |
-| 9 | *(unknown)* | `1` |
-| 10 | *(unknown)* | `1` |
-| 11 | *(unknown)* | `1` |
-| 12 | Absolute max. number of iterations | `200` |
+| 9 | Restart-file save interval, `RESTART` | `1` |
+| 10 | Print-output step interval, `IPRINTSTEP` | `1` |
+| 11 | Plot-output step interval, `IPLOTSTEP` | `1` |
+| 12 | Absolute max. number of iterations, `ABSMAX` | `200` |
 | 13 | Reduce-step-size flag | `0` |
 | 14 | Max. reduction trials | `3` |
 | 15 | Step reduction factor | `0.5` |
@@ -286,8 +289,13 @@ The second line holds the "sharpened" tolerances used for kinematic (displacemen
 | 1 | Sharpening of tolerance for kinematic loading, flag | `1` |
 | 2 | (Sharpened) tolerance for solid-phase RHS | `0.01` |
 | 3 | (Sharpened) tolerance for solid-phase energy | `0.01` |
-| 4 | Strategy for divergent steps: automatic solver switching flag | `1` |
-| 5–10 | More parameters for dealing with lack of convergence | `1 5 5 0 0 0` |
+| 4 | Strategy for divergent steps: automatic solver switching flag, `TryOtherNLsolvers` | `1` |
+| 5 | Auto-increase-max-iterations flag, `AutoIncMaxitFlag` | `1` |
+| 6 | Auto-increase amount, `AutoIncreaseIterByValue` | `5` |
+| 7 | Amplification factor on RHS non-convergence, `AmplFactorForRHSNonconvergence` | `5` |
+| 8 | Line-search flag, `LineSearch` (ver≥14.12) | `0` |
+| 9 | Skip-diverged-steps flag, `SkipDivergedSteps` (ver≥16.98) | `0` |
+| 10 | Available-solvers bitmask, `AvailableSolvers` (ver≥17.00): bit1=FNR, bit2=BFGS, bit4=IS, bit8=MNR, bit16=IS-accelerated, `31`=all, `23`=all except MNR | `0` |
 
 The same "named-set" pattern (keyword, count, then that many named sets) applies to:
 
@@ -303,18 +311,19 @@ The same "named-set" pattern (keyword, count, then that many named sets) applies
   ```
 
   Line 2, fields 6–8 are the **HHT-α time-integration parameters**: `alpha`, then the dependent Newmark `beta`/`gamma` — confirmed via the standard identities `beta = (1-alpha)^2/4`, `gamma = 0.5-alpha` (e.g. `alpha=-0.3` gives `beta=0.4225`, `gamma=0.8`, matching a real example exactly). Field 5 (`scheme`, `3` in every example seen) is presumably an integration-scheme selector; fields 1–4 unclear. Line 3, field 2 is gravitational acceleration `g` (`9.80655` in every example seen); the rest of that line and the following two lines are unclear, except line 5's **first field, which is `alpha` again** — the same value as line 2 field 6, apparently a redundant/secondary copy rather than an independent override (in every example checked so far the two agree; if a real file ever shows them *disagreeing*, that would need investigating — which one wins is not established).
-- **`PSH_CONTROL <n>`** — **pushover-analysis solver control**: governs the nonlinear static (pushover) solver settings specifically, distinct from the general `CONTROL` block used for standard nonlinear static/staged analyses.
+- **`PSH_CONTROL <n>`** — **pushover-analysis solver control**, distinct struct from `CONTROL`. Each named set is 2 lines: `<name>` then `<TypeMass> <RotInertia> <MassFilter> <ForcePattern> <Acc> <DirPsh_x> <DirPsh_y> <DirPsh_z>` (`ForcePattern`: `0`=auto, `1`=constant, `2`=linear — only if `2`, a further line `<DForce_x,y,z> <Xo_x,y,z>` follows).
 
-Following the solver-control blocks, a series of simple flag/value lines:
+Following the solver-control blocks:
 
 ```
-NONL_GEOM <0|1>              <- large-displacement/nonlinear-geometry flag
-CONSTRUCTION <flag> <n>
-<n lines, one per multi-initial-state definition, if n>0>
+NONL_GEOM <GeomNonl>              <- large-displacement/nonlinear-geometry flag
+CONSTRUCTION <n> <Active>
+<tbeg> <tend> <mult1> <mult2> <inct>     <- n lines, one per multi-initial-state definition
 THM_SETTINGS
-BISHOP_FLAG <0|1>            <- unsaturated-soil Bishop's effective stress flag
+BISHOP_FLAG <Bishop_flag>         <- 0=saturation ratio S, 1=effective saturation Seff
 PROJECT_PRESELECTION
-<6 flags>
+<MAX> <SelTab[0]> ... <SelTab[MAX-1]>    <- MAX=5: FRAMES_ONLY,STR_ONLY,DYNAMICS,PUSHOVER,SHOW_ALL preselection flags;
+                                             SHOW_ALL uses 0=meaningful-only,1=all-in-color,2=all-in-black
 ```
 
 ### 3.5 Driver / output settings and project metadata
@@ -380,6 +389,8 @@ The following keywords, one per line with value(s) immediately after:
 | `PARAMETRIC_ANALYSIS <n>` | Parametric-analysis settings |
 | `CONTACT_PARAMETERS <n>` | Contact-material default parameter set(s), same named-set pattern as §3.4 |
 
+`DRIVERS <n>`'s 3-line record (§3.5 above) has one version-gated trailing field not otherwise noted: `<SaveRestart>` after `<mult>`/`<?>`, present only for files saved with ZSoil ≥17.00.
+
 These blocks are safe to leave untouched when hand-editing a file for a different purpose (e.g. adding a load or boundary condition) — they only need attention if the change is specifically to solver/output configuration.
 
 ---
@@ -402,6 +413,8 @@ NUM_MATERIALS= 0             <- terminates the block (0 = no more standard mater
                                  materials for layered shells, using the same record shape — see
                                  §4.3.2 GEOM-> "Shell Layered" and §4.4)
 ```
+
+`BUTTONS=`'s 14 flags, in order: `Elastic, Unit weights(Density), Geometry, Main, Flow, Creep, Non linear, Heat, Humidity, Initial Ko State, <unused — legacy Impermeability slot>, Stability, Discontinuity, Damping`. Each toggles whether the corresponding sub-tag block is meaningful for this material (an unset flag's block is still written, just with default/inert content). For a plain vs. layered/composite `Elastic Beam`, it's the `Non linear` flag (index 6) that's repurposed as the "layered cross-section" selector — see §4.3.2.
 
 Example (continuum "Elastic" soil material):
 
@@ -428,10 +441,11 @@ ZSoil organizes every material by **Continuum/Structure type** (which element gr
 | Continuum/Structure type | Material formulation | Sub-tags present (order as in file) | Notes |
 |---|---|---|---|
 | Continuum (`Q4`/`B8`/`T3`, §7.1) | `Elastic` | `ELAS->` `GEOM->` `DENS->` `FLOW->` `CREEP->` `NONL->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | `Elastic`, `Unit weights`, `Flow`, and `Initial Ko State` checkboxes present in the GUI; `Creep` present but unchecked; no `Non linear` option (no plasticity model). |
-| Continuum | *(nonlinear soil models, e.g. Mohr-Coulomb)* | same tag set, `NONL->` populated | Exact `<type>` string and a populated `NONL->` example not available. |
+| Continuum | `HS-small strain stiffness` (short name `HSS` in the `<name>` line's own conventional use, though `<name>` is free text) | same tag set as `Elastic`, `NONL->` populated | Hardening-Soil-type nonlinear/stress-dependent stiffness model with a small-strain plateau. See §4.3.1/§4.3.7 for confirmed `ELAS->`/`NONL->` field detail. |
+| Continuum | *(other nonlinear soil models: Mohr-Coulomb, Hoek-Brown, Rankine, Huber-Mises, Drucker-Prager, Duncan-Chang, Cap model, Cam-Clay, Hujeux)* | same tag set, `NONL->` populated | Each is a distinct model class internally, but several (Mohr-Coulomb/Hoek-Brown/Rankine) share one umbrella `<type>` string family (`Menetrey`) rather than each having a unique literal — the exact `<type>` text per model and their `NONL->` field layouts are not documented here. |
 | Beams (`BEL2`, §7.2) | `Elastic Beam` (plain) | `ELAS->` `GEOM->` `MAIN->` `DENS->` `FLOW->` `CREEP->` `NONL->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | `GEOM->` selects Profiles/User/Values cross-section (§4.3.2). |
-| Beams | `Elastic Beam` (layered/composite) | same tag set; `GEOM->` carries embedded reinforcement fibers | Same type *string* as plain `Elastic Beam` — distinguished only by `BUTTONS[6]` (§4.3.2). Fibers reference `LAYERED_BEAM_COMPONENTS` (§4.4). |
-| Trusses (`TRS2`/`LNK2`, §7.3) | *(type string not available)* | `ELAS->` `GEOM-><area>` `MAIN->` `DENS->` `FLOW->` `CREEP->` `NONL->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | Only the numeric sub-tag content is documented, via the element's `mat` reference. |
+| Beams | `Elastic Beam` (layered/composite) | same tag set; `GEOM->` carries embedded reinforcement fibers | Same type *string* as plain `Elastic Beam` — distinguished only by `BUTTONS=`'s `Non linear` flag, index 6, repurposed as an `IsLayeredCrossSection` selector (§4.3.2). Fibers reference `LAYERED_BEAM_COMPONENTS` (§4.4). |
+| Trusses (`TRS2`/`LNK2`, §7.3) | `Truss/Cable` | `ELAS->` `GEOM-><area>` `MAIN->` `DENS->` `FLOW->` `CREEP->` `NONL->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | Only the numeric sub-tag content is documented, via the element's `mat` reference. |
 | Shells (`SXQ4`/`SHQ4`, §7.5) | `Shell` (plain, single/one-layer) | `Unit weights`(`DENS->`) `Flow`(`FLOW->`) `Non linear`(`NONL->`) `Heat`(`HEAT->`) `Humidity`(`HUMID->`) `Damping`(`DAMP->`) | This formulation's own `ELAS->`/`GEOM->` content is not documented here. |
 | Shells | `Shell Layered` | `ELAS->` (own, likely vestigial) `GEOM->` (core+fiber layer table) `DENS->` `FLOW->` (shell variant, §4.3.5) `CREEP->` `NONL->` (own, likely unused) `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | `GEOM->` references a **second `NUM_MATERIALS=` pass** (§4.4) for its fiber/core materials, rather than embedding them the way a layered beam does. |
 | *(fiber/core layer material, 2nd `NUM_MATERIALS=` pass — §4.4)* | `Fiber Shell` | `Elastic`(`ELAS-><E>` only) `Geometry`(`GEOM->`, type+direction) `Non linear`(`NONL->`, `ft`/`fc`) `MAIN->` `DENS->` `FLOW->` `CREEP->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | This is where a layered shell's real tension/compression capacity and stiffness actually live (§4.3.1, §4.3.7). |
@@ -449,8 +463,13 @@ This subchapter documents each sub-tag once, covering every formulation-specific
 | Beam `Elastic Beam` (plain or layered) | `<E> <nu> <1>` + 2 more lines, unknown | `ELAS-> 200000000  0.3  1` / `0  0` / `0  0` |
 | `Fiber Shell` | `<E>` only — the material only takes a single Young's modulus; the file still stores a second value (`nu`), presumably unused for this uniaxial fiber model | `ELAS-> 2e+08  0.3` / `0  0` ×2 |
 | `Orthotropic shell` | `<E1> <E2> <nu12> <G0>` — `E1`, `E2` `[kN/m²]`, `ν12`, `G0` `[kN/m²]` | `ELAS-> 2.7e+07  2.7e+07  0.2  1.1e+07` / `0 0 0 0` ×2 |
+| Continuum `HS-small strain stiffness` | `<G0_ref> <nu_ur> <m> <pref> ...` (14+ fields, first line only) + 3 more lines like the plain `Elastic` continuum case | `ELAS-> 80000  0.2  0.5  100  10  0  1  193766  0.0002  2  1  0  90  0  2  1.6` |
 
-The 3 unknown secondary lines for Continuum/Beam are *(meaning unclear — likely anisotropy/Biot or damping-related extensions, all `0` in every model seen)*. Note `"Orthotropic shell"`'s material type string is lower-case `"shell"`, inconsistent with `"Shell Layered"`/`"Fiber Shell"`'s capitalization elsewhere in the format.
+The secondary lines for Continuum/Beam are not anisotropy or damping data — they're a load-function ref, a spatial-data ref, and (ver≥16.95) an evolution-function ref for `E`/`nu`, i.e. `E.Lf nu.Lf` / `E.Sdata nu.Sdata` / `E.EvolFun nu.EvolFun`; all `0`/unset in every model seen so far. Note `"Orthotropic shell"`'s material type string is lower-case `"shell"`, inconsistent with `"Shell Layered"`/`"Fiber Shell"`'s capitalization elsewhere in the format.
+
+**`HS-small strain stiffness` `ELAS->` field detail (partial confidence — see verification-notes.md):** only field 3 (**`m`**, the stress-dependent-stiffness exponent, i.e. stiffness scales as `(sigma'/pref)^m`) is independently confirmed, via a controlled A/B test — two otherwise-byte-identical `.inp` files differing only in the GUI's "pressure-independent" toggle produced files identical except for this one field (`0.5` → `0`) and two auto-derived values in the following `NONL->` block. Field 1 is plausibly `G0_ref` `[kN/m²]` (the small-strain reference shear modulus) and field 2 plausibly `nu_ur` (unload-reload Poisson's ratio) by position/value-magnitude analogy to the standard Hardening-Soil-small parameter set, but neither was isolated by its own A/B test — treat as a reasonable guess, not confirmed. Field 4 (`100`) is plausibly `pref` (reference stress). Remaining fields (10, 0, 1, 193766, 0.0002, 2, 1, 0, 90, 0, 2, 1.6) not decoded; field 9 (`0.0002`) is plausibly `gamma_0.7` (the small-strain threshold shear strain, standard HS-small parameter) by order-of-magnitude match to typical values, also not isolated.
+
+**`NONL->` for `HS-small strain stiffness`:** unlike plain continuum `Elastic` (where `NONL->` is always empty), this formulation populates it — first numeric line has at least 2 values that are auto-derived from the `ELAS->` block (confirmed: changing `ELAS->`'s `m` field alone changes both, `35940.9 1.028...` → `44429.5 1.265...` in the A/B test above) rather than independently specified. Not decoded further; likely auto-computed secondary stiffness parameters (by analogy to numgeo's own Hardening-Soil formulation, which auto-derives an initial-stiffness parameter unless given explicitly — see `../../../../M100/papers/NUMGE2027/calc/numgeo/shear_column_hss/README.md` for that independent, unrelated-codebase confirmation of the same general HS-family behavior).
 
 #### 4.3.2 `GEOM->` — geometry/cross-section
 
@@ -465,13 +484,16 @@ The 3 unknown secondary lines for Continuum/Beam are *(meaning unclear — likel
 0  2  0.4  0.1  0.1  0  180  10  0.005  0  1  2
 0  2  -0.4  0.1  0.1  0  180  10  0.005  0  1  2
 ```
-The two fiber lines here are symmetric (`+0.4`/`-0.4`) rebar layers. Per fiber line `<?> <offsetType> <yOffset> <zOffsetL> <zOffsetR> <?> <?> <n_reinf_bars> <total_area> <prestress> <?> <componentId>`:
+The two fiber lines here are symmetric (`+0.4`/`-0.4`) rebar layers. Per fiber line `<Orientation> <offsetType> <yOffset> <zOffsetL> <zOffsetR> <alphaStart> <alphaEnd> <n_reinf_bars> <total_area> <prestress> <ReinforcementType> <componentId>`:
+- `Orientation`: `0` = radial, `1` = circumferential — only meaningful for axisymmetric beams
 - `offsetType`: `0` = "From top"; `1` = "From bot."; `2` = "From center"
 - `yOffset` (3rd field, `±0.4`): the fiber's *relative*, vertical position within the section
 - `zOffsetL`/`zOffsetR` (4th/5th fields, `0.1`): the left/right-most fiber's *relative*, horizontal position within the section
+- `alphaStart`/`alphaEnd` (6th/7th fields, `0`/`180`): circular-section start/end angle in degrees — irrelevant (default `0°`/`180°`) for a straight rectangular beam like this example
 - `n_reinf_bars` (8th field, `10`): number of bars in the fiber — no influence on the physics (only `total_area` matters), used for the section figure only
 - `total_area`: total area of all `n_reinf_bars` in the fiber
 - `prestress`: prestress in the fiber
+- `ReinforcementType`: `0` = total area, `1` = density (area per unit width/length)
 - `componentId`: references a `LAYERED_BEAM_COMPONENTS` entry by number (§4.4) — here `2` = "steel"
 
 **Truss**: `GEOM-> <area>` — a single cross-sectional area value.
@@ -482,26 +504,26 @@ The two fiber lines here are symmetric (`+0.4`/`-0.4`) rebar layers. Per fiber l
 ```
  GEOM-> 1  10  2  0.005  0.4  2    0.005  -0.4  2    1  2  2
 ```
-Fields (0-indexed after the `GEOM->` token itself is `v[0]`): `v[1]`=`type`=1; `v[2]`=`10` *(meaning unclear from available sources)*; `v[3]`=`nFibers`=2; then per fiber `k`, `<area> <distance> <distanceFrom>` at `v[4+3k]`/`v[5+3k]`/`v[6+3k]` (fiber 1: area=`0.005`, distance=`0.4`, `distanceFrom`=`2`; fiber 2: area=`0.005`, distance=`-0.4`, `distanceFrom`=`2`); then `v[4+3·nFibers]`=`core_material`=`1` (the shell's core/matrix material id, resolved against the 2nd `NUM_MATERIALS=` pass, §4.4), followed by one material-id field per fiber at `v[5+3·nFibers+k]` (both fibers here reference material `2`) — a concrete core with steel reinforcement fibers symmetrically placed top and bottom.
+Fields (0-indexed after the `GEOM->` token itself is `v[0]`): `v[1]`=`ShearFactor`=1 (the shear correction factor itself — this **is** the "top-level shear correction factor" mentioned below, not a separate hidden field); `v[2]`=`nlayer`=10 (through-thickness numerical-integration layer count, default 10 — a real solver parameter, not an opaque constant); `v[3]`=`nFibers`=2; then per fiber `k`, `<area> <distance> <distanceFrom>` at `v[4+3k]`/`v[5+3k]`/`v[6+3k]` (fiber 1: area=`0.005`, distance=`0.4`, `distanceFrom`=`2`; fiber 2: area=`0.005`, distance=`-0.4`, `distanceFrom`=`2`); then `v[4+3·nFibers]`=`core_material`=`1` (the shell's core/matrix material id, resolved against the 2nd `NUM_MATERIALS=` pass, §4.4), followed by one material-id field per fiber at `v[5+3·nFibers+k]` (both fibers here reference material `2`) — a concrete core with steel reinforcement fibers symmetrically placed top and bottom.
 
 `distanceFrom` meaning: the fiber position is a coordinate `ξ ∈ [-1, 1]` normalized to half-thickness (`y_physical = ξ · thickness/2`); `distanceFrom` selects how `distance` maps onto `ξ`:
 - `distanceFrom=0`: `distance` is a fraction of *full* thickness measured inward from the top, `ξ = 1 - 2·distance`
 - `distanceFrom=1`: mirror of `0`, measured from the bottom, `ξ = 2·distance - 1`
 - `distanceFrom=2`: `ξ = distance` directly — already the normalized mid-plane-relative coordinate
 
-A `"Shell Layered"` material's cross-section is a table of layers: `Core` for the base/matrix layer, `Reinforcement` for each fiber, each with an **area**, a **distance** (a value plus a from-top/from-bottom/relative choice, matching `distanceFrom` 0/1/2 above), and a **material** (by number, resolved against the 2nd `NUM_MATERIALS=` pass). There is also a top-level **shear correction factor** (location within the raw `GEOM->` record not identified — possibly stored under `MAIN->`).
+A `"Shell Layered"` material's cross-section is a table of layers: `Core` for the base/matrix layer, `Reinforcement` for each fiber, each with an **area**, a **distance** (a value plus a from-top/from-bottom/relative choice, matching `distanceFrom` 0/1/2 above), and a **material** (by number, resolved against the 2nd `NUM_MATERIALS=` pass). There is also a top-level **shear correction factor** — this is `v[1]` above, the record's very first field.
 
-**`Fiber Shell`** (2nd-pass layer material): `GEOM-> <type> <vx> <vy> <vz>` — a leading type code followed by a 3-component direction vector, e.g. `GEOM-> 1  1  0  0`.
+**`Fiber Shell`** (2nd-pass layer material): `GEOM-> <Area_M> <vx> <vy> <vz>` — the leading field is **not a type code**, it's `Area_M` ("used only for membranes", default `1.0`), followed by a 3-component direction vector, e.g. `GEOM-> 1  1  0  0`.
 
-**`Orthotropic shell`** (2nd-pass layer material): `GEOM-> <vx> <vy> <vz>` — **no leading type code**, just the 3-component direction vector directly, e.g. `GEOM-> 1  0  0` (`vx=1, vy=0, vz=0`). Compare `Fiber Shell`'s extra leading `type` field above.
+**`Orthotropic shell`** (2nd-pass layer material): `GEOM-> <vx> <vy> <vz>` — no leading `Area_M` field, just the 3-component direction vector directly, e.g. `GEOM-> 1  0  0` (`vx=1, vy=0, vz=0`).
 
 #### 4.3.3 `MAIN->` (beam/truss materials only)
 
-E.g. `MAIN-> 0` or `MAIN-> 1  0  0  0  0  0` — a small flag set, first value possibly a material-model sub-type selector. *(Not fully known.)*
+Class-dependent, not one fixed shape: plain `Elastic Beam` writes a single field `BeamsType` (`0`=displacement formulation, `1`=flexibility formulation); `Truss/Cable` writes a single field `NonLinearGeomFlag`. The 6-field form sometimes seen (`MAIN-> 1  0  0  0  0  0` = `BbarModes, UStatesInc, NonLinear, Stab1, Stab2, Stab3`) belongs to a different, more generic material class (`ElasticStr`/"Elastic Structure"), not a beam or truss — if a real beam/truss sample shows 6 fields rather than 1, re-check which material class it actually is before trusting this mapping.
 
 #### 4.3.4 `DENS->` — density/consolidation/permeability-adjacent parameters
 
-Example (continuum): `DENS-> 20  10  0.6  1  1  16.7` followed by 3 more lines (largely `0`s, plus a line like `-1  26.5  20  10  0`). Field 1 (`20`) = **γ, weight/unit volume** `[kN/m³]`; field 2 (`10`) = **ρ, mass/unit volume** `[kg/m³]`. A "Data mode" setting can switch γ/ρ from a plain constant to a value driven by an `EXIST_FUNC`/`LOAD_FUN`-style function instead — this likely accounts for the remaining trailing fields being non-zero in some models. Remaining fields beyond γ/ρ *(meaning unclear)*.
+4 lines. Line 1: `<UnitWeight> <WaterSpecWeight> <VoidRatio> <ForceMult> <MassMult> <UnitWeightDry>` — e.g. `20  10  0.6  1  1  16.7` (γ=20, γ_fluid=10, e0=0.6, mult=1, mult=1, γ_dry=16.7). Line 2: `UnitWeight.Lf WaterSpecWeight.Lf VoidRatio.Lf UnitWeightDry.Lf` (load-function refs). Line 3: `UnitWeight.Sdata WaterSpecWeight.Sdata VoidRatio.Sdata UnitWeightDry.Sdata` (spatial-data refs). Line 4: `calc_gamma_1ph_type calc_gamma_s calc_gamma calc_gamma_f calc_w` — specimen data for the GUI's Unit-Weight-Calculator tool (mode, γs, γ, γfluid, water content w); cosmetic/tool-state, not used by the solver.
 
 #### 4.3.5 `FLOW->` — hydraulic/permeability parameters
 
@@ -510,26 +532,30 @@ Two distinct layouts, depending on material type:
 
   | Index | Field | Notes |
   |---|---|---|
-  | `v0` | Darcy's coefficient (1st) `[m/day]` | e.g. **kx** |
-  | `v1` | Darcy's coefficient (2nd) `[m/day]` | e.g. **kz**; equal to `v0` when "isotropic flow" is on |
-  | `v2` | *(unclear)* | always equal to `v0` in every model seen — possibly an unexposed 3rd permeability component, or an internal duplicate of `v0` |
+  | `v0` | Darcy's coefficient **Kx** `[m/day]` | |
+  | `v1` | Darcy's coefficient **Ky** `[m/day]` | equal to `v0` when "isotropic flow" is on |
+  | `v2` | Darcy's coefficient **Kz** `[m/day]` | 3D only — not shown/editable in the 2D dialogs, hence equals the shared default whenever a 2D sample is inspected |
   | `v3` | Inclination angle `[deg]` | |
-  | `v4`, `v8` | flags, unclear | always `1` |
-  | `v5`, `v6`, `v7`, `v9` | flags, unclear | always `0` |
+  | `v4`–`v6` | Orientation vector **m** (`mx,my,mz`) | default `1,0,0` — not flags |
+  | `v7`–`v9` | Orientation vector **v** (`vx,vy,vz`) | default `0,1,0` — not flags |
   | `v10` | Fluid bulk modulus **Kf** `[kN/m²]` | |
   | `v11` | van Genuchten residual saturation ratio **Sᵣ** | |
   | `v12` | van Genuchten parameter related to the air entry suction **α** `[1/m]` | |
-  | `v13`, `v15`, `v19` | flags, unclear | always `1` |
-  | `v14` | Permeability-function-for-unsaturated-medium selector | `0`=Irmay, `1`=Mualem |
+  | `v13` | hardcoded constant | always `1` — not user data |
+  | `v14` | "Skip gravity term in Darcy's law" flag | `0`=off (default), `1`=on |
+  | `v15` | "Undrained behavior" flag | |
   | `v16` | Undrained penalty factor **K^F/K** | |
   | `v17` | Suction pressure cut-off `[kN/m²]` | |
-  | `v18`, `v21`, `v22` | Bishop's-effective-stress section: "use global setting" flag and pore-pressure weighting-term selector (`S` vs `Seff^(1/(n·m))`) | which of these 3 positions is which of the 2 settings not fully separated — toggling both together shifted all three from `1`→`0` |
+  | `v18` | "Isotropic flow" flag | unrelated to Bishop despite sitting inside this range |
+  | `v19` | "Include air compressibility" flag | |
   | `v20` | Air stiffness bulk modulus **Ka** `[kN/m²]` | |
+  | `v21` | "Use Bishop's global settings" flag | |
+  | `v22` | Bishop pore-pressure weighting-term selector | `0`=`S`, `1`=`Seff^(1/(n·m))` |
   | `v23` | Biot coefficient "Enable" flag | `0`=disabled (default), `1`=enabled |
   | `v24` | Biot: solid grains stiffness bulk modulus **Ks** `[kN/m²]` | |
   | `v25` | Biot: current value of **α** (elastic range) | |
   | `v26` | van Genuchten measure of the pore-size distribution **n** | |
-  | `v27` | "Skip gravity term" flag | `0`=off (default), `1`=on |
+  | `v27` | Permeability-function-for-unsaturated-medium selector | `0`=Irmay, `1`=Mualem |
 
   Example (defaults): `FLOW-> 1  1  1  0  1  0  0  0  1  0  2000000  0  20  1  0  1  1000000  100  1  1  100  1  1  0  1e+38  1  2  0`.
 - **Shell**: a much shorter record, e.g. `FLOW-> 1  1  1  1  0  0  1  0  0  2  2e+06`. Fields, in order of appearance (exact token positions not independently verified, but the field set and meaning are known): a "fully permeable" flag, an "anisotropic flow in shell" flag, permeabilities **kx′**/**ky′** (only if anisotropic)/**kz′** `[m/s]`, an **orientation vector for the x′ axis** (`vx`,`vy`,`vz`, only meaningful if anisotropic), and a **van Genuchten soil-water-retention curve**: **residual saturation Sᵣ** and **parameter related to the air entry α** `[1/m]`.
@@ -538,7 +564,7 @@ Beam/truss materials have an effectively empty `FLOW->` (no values, just the tag
 
 #### 4.3.6 `CREEP->`
 
-E.g. `CREEP-> 0  0  0  0  0  0  0  0  4  0  500  50  5  0  0  0  0` — identical across every inspected material regardless of type, suggesting this is a shared default block, populated only when creep is actually enabled (via `BUTTONS=` flags). *(Field meaning not confirmed.)*
+`<TypeCurve> <ExFcDev> <ExFcVol> <ADev> <BDev> <AVol> <BVol> <NLA> <NLB> <kappa> <sig0> <sigC> <Alpha_s> <Ko> ...` — e.g. `0  0  0  0  0  0  0  0  4  0  500  50  5  0  0  0  0` (`TypeCurve=0`=power-law creep, `NLB` default `4.0`, `sig0` default `500`, `sigC` default `50`, `Alpha_s` default `5.0`; identical across every inspected material since none have creep actually enabled via `BUTTONS=`). `TypeCurve` selects which further conditional fields follow (Norton/double-power, EC2:2008(-enhanced), anisotropic-swell, or fire-creep variants each add their own named trailing fields) — only the base 14-field shape is documented here.
 
 #### 4.3.7 `NONL->` — nonlinear (plasticity) parameters
 
@@ -548,25 +574,27 @@ Empty (`NONL->` alone) for plain Continuum `Elastic`/Beam `Elastic Beam` materia
 1000  500000  1  1  0.02  0.15  0.2
 0  0  0  0
 ```
-The first two numeric fields are **`ft`** (tension strength) then **`fc`** (compression strength), in that order — e.g. concrete `1000`(ft)/`500000`(fc); steel `235000`(ft)/`235000`(fc), consistent with steel's symmetric tension/compression yield. `FIRE_DATABASE <flag> <mode>` prefixes the line and toggles fire-resistance design checks; `<mode>` is `Off` or `EC2:2008` (Eurocode 2 fire-design method); `<flag>` is `0` for `Off`. Remaining fields (`1  1  0.02  0.15  0.2` and the trailing `0 0 0 0` line) *(meaning unclear — plausibly softening/regularization parameters, by analogy with `LAYERED_BEAM_COMPONENTS`' `reg_soft`/`char_len` fields, §4.4)*.
+Line 1 is `<ft> <fc> <ft0/ft> <fc0/fc> <eps_y> <eps_u> <eps_e>`: **`ft`** (tension strength) then **`fc`** (compression strength) — e.g. concrete `1000`(ft)/`500000`(fc); steel `235000`(ft)/`235000`(fc), consistent with steel's symmetric tension/compression yield — then `ft0/ft`/`fc0/fc` (ratios locating the start of nonlinearity relative to `ft`/`fc`, both default `1.0`), and `eps_y`/`eps_u`/`eps_e` (yield/ultimate/elastic-limit strain, defaults `0.02`/`0.15`/`0.2` — matching this example exactly). `FIRE_DATABASE <flag> <mode>` prefixes the line and toggles fire-resistance design checks; `<mode>` is `Off` or `EC2:2008` (Eurocode 2 fire-design method); `<flag>` is `0` for `Off`. The trailing `0 0 0 0` line is 4 evolution-function references (one per line-1 strength/ratio field), unset in this example.
 
 #### 4.3.8 `HEAT->`
 
-E.g. `HEAT-> 1e-05  207.36  2000  0  105000  1.5  0.2083333333333333  4000  20  0  1` plus 2 more lines. Field 1 (`1e-05`) = heat dilatancy (thermal expansion coefficient) `[1/°C]`. Remaining fields *(meaning unclear)*.
+`<HeatDilat> <Lambda> <HCapacity> <HeatSource> <HInf> <Heata> <Heattd> <HeatQbyR> <HeatTf> <FluidHeatDilat> [<Heatb> if ver≥16.98] ...` — e.g. `1e-05  207.36  2000  0  105000  1.5  0.2083333333333333  4000  20  0  1`: **`HeatDilat`** (solid thermal dilatancy `[1/°C]`), **`Lambda`** (thermal conductivity), **`HCapacity`** (heat capacity c*), **`HeatSource`** ("source term" flag), then `HInf`/`Heata`/`Heattd`/`HeatQbyR`/`HeatTf` (heat-source model parameters, meaningful only if `HeatSource` is on), **`FluidHeatDilat`** (fluid thermal dilatancy), and `Heatb`. Further version-gated fields follow (advection-term flag, fluid conductivity/capacity, and load/evolution-function refs for several of the above) — not detailed here.
 
 #### 4.3.9 `HUMID->`
 
-E.g. `HUMID-> 0  0.05  0.75  0.031104  0`. Field 1 = hygral dilatancy (e.g. `0.01` in the beam example `HUMID-> 0.01`). Remaining fields *(meaning unclear)*.
+`<HumDilat> <Huma> <Humwl> <HumDl> <Humkappa>` — e.g. `0  0.05  0.75  0.031104  0`: **`HumDilat`** (hygral dilatancy — e.g. `0.01` in the beam example `HUMID-> 0.01`), **`Huma`** (moisture-conductivity parameter "a", default `0.05`), **`Humwl`** (W1 parameter, default `0.75`), **`HumDl`** (D1 diffusivity), **`Humkappa`** (coupling term `[m³/J]`, default `0`).
 
 #### 4.3.10 `INIS->` — initial-state parameters
 
-**Continuum**: e.g. `INIS-> 0.385  0.385  0  1  0  0  0  1  0  0  0  1`. The first 3 fields are the **initial Ko (at-rest earth pressure) state**: **Ko(x′)**, **Ko(z)** (the two assumed lateral-earth-pressure coefficients), then the **inclination angle ⟨x′,x⟩** `[deg]` (here `0.385`, `0.385`, `0` — a 2D model with equal, isotropic Ko in both directions and no inclination). Remaining fields *(meaning unclear)*.
+**Continuum**: `<Ko(x')> <Ko(z)> <angle> <mx> <my> <mz> <vx> <vy> <vz> <EvaluateKo> <KoCutOffFlag> <KoCutOff>` — e.g. `0.385  0.385  0  1  0  0  0  1  0  0  0  1`. Fields 1–3 are the **initial Ko (at-rest earth pressure) state**: **Ko(x′)**, **Ko(z)**, then the **inclination angle ⟨x′,x⟩** `[deg]` (here `0.385`, `0.385`, `0` — a 2D model with equal, isotropic Ko in both directions and no inclination). Fields 4–9 are the same `m`/`v` orientation-vector pair seen in `FLOW->` (§4.3.5), defaults `(1,0,0)`/`(0,1,0)`. Field 10 is `EvaluateKo` (ver≥16.04, auto-Ko-from-OCR flag), field 11 `KoCutOffFlag` (ver≥23.53, "use upper limit" flag), field 12 `KoCutOff` (ver≥24.08, the limit value) — here `0`, `0`, `1`.
+
+Same field shape seen in a `HS-small strain stiffness` continuum material (`INIS-> 0.5  0.5  0  1  0  0  0  1  0  1  0  1`, from the NUMGE2027 project) — consistent with the same Ko(x′)/Ko(z)/inclination convention by structural match, though not independently re-confirmed via the GUI for this specific formulation. Notably, a model using this `INIS->` line ran its dynamic step directly from this initial state with **no separate `*Geostatic`-type consolidation driver** beforehand (unlike numgeo, which needs one for its own stress-dependent-stiffness material) — consistent with (but not proof of) `INIS->`'s Ko values being applied as the starting stress state automatically, without a dedicated solve step. Worth a GUI-confirmation pass if this matters for a future model.
 
 **Beam**: e.g. `INIS-> 1  1  0  1  0  0  0  1  0  0  0  1` — same 12-field shape as continuum, but the first 3 fields (Ko-related for continuum) are presumably not applicable/ignored for a beam; not independently confirmed. Remaining fields *(meaning unclear)*.
 
 #### 4.3.11 `STAB->`
 
-E.g. `STAB-> 2  0  0  0  1  1.2  0.2  1  1.5  0.5` (continuum, non-trivial) vs `STAB-> 0  0  0  0  0  0  0  0  0  0` (beam, all zero) — stabilization/regularization parameters, active for continuum materials only.
+`<StabType> <SL_start> <SL_end> <SL_inc> <tgPhi_start> <tgPhi_end> <tgPhi_inc> <c_start> <c_end> <c_inc>` — e.g. `2  0  0  0  1  1.2  0.2  1  1.5  0.5` (continuum, non-trivial) vs `0  0  0  0  0  0  0  0  0  0` (beam, all zero). `StabType`: `0`=disabled, others select which of the three safety-factor ranges (stress-level `SL`, `tan(φ)`, cohesion `c`) drive the local-stability check; the three ranges are each `[start, end, increment]`. Active for continuum materials only.
 
 #### 4.3.12 `DISC->`
 
@@ -590,9 +618,9 @@ concrete
 steel
 2e+08  0.3  25  1  235000  235000  0  0.005  0  0  -1  0  1  
 ```
-Field-by-field for the parameter line (`v[0]`-indexed): `E`=`v[0]` (`2e+07` concrete, `2e+08` steel); `nu`=`v[1]` (`0.3` both); `v[2]`=`25` *(meaning unclear — identical for both materials despite very different real-world unit weights, so probably not unit weight; possibly a shared default such as a reference temperature)*; `type`=`v[3]`=`1` (elastic-plastic, both); `ft`=`v[4]` (tension strength); `fc`=`v[5]` (compression strength); `reg_soft`=`v[6]`=`0`; `char_len`=`v[7]`=`0.005` (both); `E0_setup`=`v[8]`=`0`; `coupTC_soft`=`v[9]`=`0`; `creep_type`=`v[10]`=`-1` (both — creep disabled); `creep_A`=`v[11]`=`0`; `creep_B`=`v[12]`=`1` (both).
+Field-by-field for the parameter line (`v[0]`-indexed): `E`=`v[0]` (`2e+07` concrete, `2e+08` steel); `nu`=`v[1]` (`0.3` both); `g`=`v[2]`=`25` — unit weight `[kN/m³]`; it reads `25` for both concrete and steel here only because this field defaults to `25` and wasn't edited for either component in this sample, not because it's unused; `type`=`v[3]`=`1` (elastic-plastic, both); `ft`=`v[4]` (tension strength); `fc`=`v[5]` (compression strength); `reg_soft`=`v[6]`=`0`; `char_len`=`v[7]`=`0.005` (both); `E0_setup`=`v[8]`=`0`; `coupTC_soft`=`v[9]`=`0`; `creep_type`=`v[10]`=`-1` (both — creep disabled); `creep_A`=`v[11]`=`0`; `creep_B`=`v[12]`=`1` (both).
 
-**`SIG_EPS_FUN <n>`**: user-defined stress-strain functions, referenced from `LAYERED_BEAM_COMPONENTS`/nonlinear materials by name. *(Full field layout not confirmed.)*
+**`SIG_EPS_FUN <n>`**: user-defined stress-strain functions, referenced from `LAYERED_BEAM_COMPONENTS`/nonlinear materials by name. Two version-gated formats: files saved with ZSoil <14.03 use a legacy shape (`<nPts> <FunName>` then `nPts` lines of `<x> <y>`); ≥14.03 uses `<Number> <size> <FunName>` / `<shift> <scaleFactor> <FlagBitCode> <UnitX> <UnitY>` / then `size` lines of `<x> <y>`.
 
 **Layered shells** instead use a **second `NUM_MATERIALS= <n>` block**, placed immediately after the layered shell material's own single-material block — confirmed from `NL_shell_traction.inp`. **A layer's material is not restricted to `Fiber Shell`** — a layer can instead reference an `Orthotropic shell` material — both formulations coexist in the same second pass, distinguished by their `<type>` line:
 ```
@@ -652,7 +680,7 @@ LOAD_FUN <n>
 ...                    <- repeated for each of the n functions
 ```
 
-`number`, `nSteps`, `name` on the first line; then a **flags line that carries the interpolation-mode selector as `#<N>`**: `#1` means the solver interpolates the table at its own time increments rather than being forced to step through the LTF's own listed time points; `#0` is the opposite (solver increments are forced to match the LTF's own points). `No flags` (no `#`) also appears as a value here — its precise relationship to `#0`/`#1` is unconfirmed. The next line is `[shift, scale, ?]`: `shift` is a time shift applied to the function's time axis, `scale` is a multiplier applied to all step values, and the third field's purpose is unknown (always `0` in every example seen). **Note:** an earlier version of this doc called this third line `[t0, scale, type]` with `type` = interpolation mode on *this* line — that was wrong; the interpolation selector is the `#N` on the flags line above, not a field here. Then `nSteps` lines of `[time, value]` pairs defining the piecewise function. LF number `0` is implicit — a constant multiplier of `1` for the whole analysis, never defined explicitly in the file.
+`number`, `nSteps`, `name` on the first line; then a **flags line, a bit-coded `CString`**: the only currently-meaningful bit is bit 1 (`FC_FLAG_SKIP_TIME_STEPS`) — `#1` means the solver interpolates the table at its own time increments rather than being forced to step through the LTF's own listed time points; `#0`/`No flags` is the opposite (solver increments are forced to match the LTF's own points). Format is `"No flags"` or `"#<bitmask>"`. The next line is `<shift> <scale> <FlagBitCode>`: `shift` is a time shift applied to the function's time axis, `scale` is a multiplier applied to all step values, and `FlagBitCode` (always `0` in every example seen) selects which of three auto-generated, time-shifted copies of this function a construction-stage re-application belongs to (`1`/`2`/`4` = first/second/third shift group; `0` = not a shifted copy). Then `nSteps` lines of `[time, value]` pairs defining the piecewise function. LF number `0` is implicit — a constant multiplier of `1` for the whole analysis, never defined explicitly in the file.
 
 Example (trivial, `No flags` variant):
 ```
@@ -762,7 +790,7 @@ Example header line (one 2D subdomain): `1 128 SUBD_2D 4 4 0 4 1 4 0 1 0 0`. *(F
 
 | Marker | Header count label | Notes |
 |---|---|---|
-| `.glk` | number of Local bases | Custom local coordinate systems, referenced by element records' `rm1`/`rm2` fields. |
+| `.glk` | number of Local bases | Custom local coordinate systems. How `.glk` bases are referenced from elements is unconfirmed. |
 | `.axs` | *(no direct header label)* | *(meaning unclear)* |
 | `.apl` | number of auxiliary planes | **Not purely a GUI construction plane** — see below; a populated `.pbc` (§8.3) needs a matching `.apl` entry. |
 | `.igl` | number of auxiliary points | Auxiliary sketch points, distinct from `.pob`. |
@@ -800,23 +828,25 @@ This chapter documents the element-definition blocks of the `.inp` file. Each bl
 A recurring pattern across nearly every element record is:
 
 ```
-<idx> <number> <TAG> <node1> ... <nodeN> <...type-specific fields...> <mat> <rm1> <rm2> <EF> <LF> [<extra>]
+<idx> <number> <TAG> <node1> ... <nodeN> <splitPar...> <mat1> <mat2> <mat3> <EF> <ULF> <iLayer>
 ```
 
-where `<idx>` is a **global counter shared across every element block in the file**, incrementing continuously in file order regardless of type (it only equals `<number>` for `.i0g`, since that's the first element block). `<number>` is a **per-block-type counter that restarts at 1** for each new element section. `<idx>` — not `<number>` — is what other records use to cross-reference an element (e.g. `.ics`/`.icg` paired-element fields, `.anh` truss references). When hand-inserting elements, assign fresh `<idx>` values past the current file-wide maximum. Several trailing integer fields recur across element families whose exact purpose is unknown; these are called out per-section.
+where `<idx>` is a **global counter shared across every element block in the file**, incrementing continuously in file order regardless of type. `<number>` is a **per-block-type counter that restarts at 1** for each new element section. `<idx>` — not `<number>` — is what other records use to cross-reference an element (e.g. `.ics`/`.icg` paired-element fields, `.anh` truss references). When hand-inserting elements, assign fresh `<idx>` values past the current file-wide maximum.
+
+The trailing block is uniform across element types: `<splitPar...>` is one mesh-subdivision count per local axis (1 value for `T3`, 2 for `Q4`, 3 for `B8`/`W6`, `1`=unsplit; absent — 0 values — for beams/trusses/shells), then `<mat1> <mat2> <mat3>` are **`InitialMaterial`**, **`ReplacementMaterial1`**, **`ReplacementMaterial2`** — a material-replacement mechanism. `mat1`/`InitialMaterial` is the element's material for the rest of the analysis unless replaced; `mat2`/`mat3` are `0` unless the element is set up to swap to a different material (e.g. at a construction stage or other trigger — the exact replacement-trigger mechanism isn't confirmed here). `<EF>` the existence function, `<ULF>` an **unloading-function** reference — a `LOAD_FUN` entry number, same list `LF` draws from, just used in the unloading role rather than the loading one (§2.5, and same concept as `.inb`'s `ULF` field, §8.1) — and the record always ends in `<iLayer>`, the GUI's construction-layer grouping index (unrelated to `EF`/staging) — the layer names it indexes into are listed in `.ily`, §14.1.
 
 ### 7.1 `.i0g` — Volumic/continuum elements
 
 Count-terminated: the record count equals `nVolumics3D + nVolumics2D` (header fields "number of continuum 3D elements" / "number of continuum 2D elements"). One line per element. Type tag in field 3 selects the node count and the position of the trailing field group.
 
-Node indices follow the tag, then — at an offset `pos` that depends on the tag (`pos=5` for `Q4`, `pos=10` for `B8`) — the fields `mat` (`v[pos+4]`), `rm1` (`v[pos+5]`), `rm2` (`v[pos+6]`), `EF` (`v[pos+7]`), `LF` (`v[pos+8]`) appear, followed by one trailing field whose meaning is unclear.
+Node indices follow the tag, then the `splitPar` mesh-subdivision counts (2 values for `Q4`, 3 for `B8`), then `mat1 mat2 mat3 EF ULF iLayer` (§7 intro).
 
 **Q4 (4-node quad, 2D)**:
 ```
 .i0g
 1 1 Q4 1 2 3 4 1 1 1 0 0 0 0 0
 ```
-Field breakdown (0-indexed after split): `v0`=1 (idx), `v1`=1 (element number), `v2`=`Q4`, `v3..v6`=nodes 1,2,3,4, `v7..v8`=1,1 *(unclear)*, `v9`=1 (mat), `v10`=0 (rm1), `v11`=0 (rm2), `v12`=0 (EF), `v13`=0 (LF), `v14`=0 (trailing, unclear).
+Field breakdown (0-indexed after split): `v0`=1 (idx), `v1`=1 (element number), `v2`=`Q4`, `v3..v6`=nodes 1,2,3,4, `v7..v8`=1,1 (`splitPar`, unsplit), `v9`=1 (`mat1`), `v10`=0 (`mat2`), `v11`=0 (`mat3`), `v12`=0 (`EF`), `v13`=0 (`ULF`), `v14`=0 (`iLayer`).
 
 **Node order / face numbering**: `v3..v6` must be listed counter-clockwise (positive-area shoelace sum) — a clockwise or self-intersecting listing produces a degenerate/inverted element. Local face (edge) numbering follows directly from this order: **face `k` is the edge from `node_k` to `node_{k+1}`** (1-indexed, wrapping — face 1 = n1→n2, ..., face 4 = n4→n1). This is what `.ics`/`.icg` "paired-elem face" fields (§7.8, §7.9) and `.gsl` `UNI_LOAD` face references (§9.3) mean.
 
@@ -825,20 +855,18 @@ Field breakdown (0-indexed after split): `v0`=1 (idx), `v1`=1 (element number), 
 .i0g
 1 1 B8 1 2 4 3 5 6 8 7 1 1 1 1 0 0 0 0 0
 ```
-`v0`=1, `v1`=1, `v2`=`B8`, `v3..v10`=nodes (1,2,4,3,5,6,8,7), `v11..v13`=1,1,1 *(unclear — one more flag field than `Q4`, plausibly a 3D-specific integration/formulation flag)*, `v14`=1 (mat), `v15`=0 (rm1), `v16`=0 (rm2), `v17`=0 (EF), `v18`=0 (LF), `v19`=0 (trailing, unclear). This layout is identical for the EAS and B-bar formulation variants — the formulation choice is not encoded in this record.
+`v0`=1, `v1`=1, `v2`=`B8`, `v3..v10`=nodes (1,2,4,3,5,6,8,7), `v11..v13`=1,1,1 (`splitPar`, unsplit — 3 values for a 3D element vs. `Q4`'s 2), `v14`=1 (`mat1`), `v15`=0 (`mat2`), `v16`=0 (`mat3`), `v17`=0 (`EF`), `v18`=0 (`ULF`), `v19`=0 (`iLayer`). This layout is identical for the EAS and B-bar formulation variants — the formulation choice is not encoded in this record.
 
 **B8 face numbering** — relevant wherever a `faceId` targets a `B8` element (`.gsl` `UNI_LOAD`, §9.3; `.ple` `POINT_LOAD`/`SURF_LOAD` with `targetType 8`, §9.4). Local nodes 1–4 form one quad face and 5–8 the opposite quad face, connected edge-to-edge (1–5, 2–6, 3–7, 4–8); the 6 face ids are assigned so that **opposite faces sum to 7**:
 
 | Face id | Local nodes |
 |---|---|
-| 1 | 1-2-3-4 |
+| 1 | 1-4-3-2 |
 | 2 | 1-2-6-5 |
-| 3 | 4-1-5-8 *(inferred)* |
+| 3 | 1-5-8-4 |
 | 4 | 2-3-7-6 |
-| 5 | 3-4-8-7 *(inferred)* |
+| 5 | 3-4-8-7 |
 | 6 | 5-6-7-8 |
-
-Faces 3 and 5 are inferred by elimination and by the "opposite faces sum to 7" pattern the other four establish; treat them as unconfirmed if precision matters.
 
 **T3 (3-node tri, 2D)**:
 ```
@@ -846,9 +874,9 @@ Faces 3 and 5 are inferred by elimination and by the "opposite faces sum to 7" p
 1 1 T3 2 1 3 1 1 0 0 0 0 0
 2 2 T3 1 4 3 1 1 0 0 0 0 0
 ```
-`v0`=1, `v1`=1, `v2`=`T3`, `v3..v5`=nodes (2,1,3), then `v6..v12`=`1 1 0 0 0 0 0` (7 trailing fields vs. 8 for `Q4`/`B8` — one fewer). The trailing-field-to-attribute mapping for `T3` is *(unclear)* — by position it would plausibly be 2 unclear ints, then mat, rm1, rm2, EF, LF, but this is not confirmed.
+`v0`=1, `v1`=1, `v2`=`T3`, `v3..v5`=nodes (2,1,3), then `v6..v12`=`1 1 0 0 0 0 0` (7 trailing fields vs. 8 for `Q4`/`B8` — `T3` has only 1 `splitPar` value): `v6`=1 (`splitPar`, unsplit), `v7`=1 (`mat1`), `v8`=0 (`mat2`), `v9`=0 (`mat3`), `v10`=0 (`EF`), `v11`=0 (`ULF`), `v12`=0 (`iLayer`).
 
-A `W6` (6-node wedge/prism) tag exists, with the same layout pattern as `B8` (nodes then `1 1 1` then mat/rm1/rm2/EF/LF/trailing):
+A `W6` (6-node wedge/prism) tag exists, with the same layout pattern as `B8` (nodes then `1 1 1` splitPar then `mat1 mat2 mat3 EF ULF iLayer`):
 ```
 1 1 W6 1 4 6 2 3 5 1 1 1 1 0 0 0 0 0
 ```
@@ -866,14 +894,14 @@ Count-terminated: count = "number of Beams (*.ibg),(*ibm)". Each `BEL2` (2-node 
 0
 ```
 Line 1: `<idx> <number> BEL2 <node1> <node2>` = `411 1 BEL2 1 3`.
-Line 2: six floats, always zero *(meaning unclear)*.
-Line 3: orientation vector, six floats (two triplets) defining the beam's local axis.
-Line 4: ` 11 0 0 2 0 0` → `mat`=11 (`v0`), then `v1`,`v2`=0,0 *(unclear, plausibly rm1/rm2)*, `EF`=2 (`v3`), `v4`,`v5`=0,0 *(unclear, plausibly LF and a trailing flag)*.
+Line 2: `<centrGloLoc> <centr1[x,y,z]> <centr2[x,y,z]>` — a cross-section **centroid-offset** mechanism for eccentric/rigid-offset beam connections: `centrGloLoc` selects global vs. local coordinates for the two offset vectors, `centr1`/`centr2` are the centroid offset at node1/node2. Zero (as here) means no eccentricity.
+Line 3: `<dirDef> <dir1[x,y,z]> <dir2[x,y,z]>` — the beam's local-axis orientation vectors at each node (`dirDef` selects by-vector vs. by-point definition).
+Line 4: ` 11 0 0 2 0 0` → `mat1`=11 (`v0`), `mat2`=0 (`v1`), `mat3`=0 (`v2`), `EF`=2 (`v3`), `ULF`=0 (`v4`), `iLayer`=0 (`v5`).
 Line 5: end-release/hinge flag, `0` typically; if `1`, two additional (undocumented) lines follow.
 
 ### 7.3 `.itg` — Truss elements
 
-Count-terminated: count = "number of truss elements (*.itg),(*.itm)". Each record is `TRS2` (truss, `type=0`) or `LNK2` (anchor/link, `type=1`).
+Count-terminated: count = "number of truss elements (*.itg),(*.itm)". Each record is `TRS2` (plain truss) or `LNK2` (anchor/link) — the tag is chosen automatically: `LNK2` if either end is linked/embedded into surrounding elements, `TRS2` otherwise.
 
 **No prestress**:
 ```
@@ -882,8 +910,8 @@ Count-terminated: count = "number of truss elements (*.itg),(*.itm)". Each recor
  13 0 0 1 0 0
 0
 ```
-Line 1: `<idx> <number> TRS2 <node1> <node2> <4 trailing zeros>` — the four trailing fields after the node pair are *(meaning unclear)*, always `0 0 0 0` in every model seen.
-Line 2 (material line): ` 13 0 0 1 0 0` → `mat`=13 (`v0`), `rm1`=0 (`v1`), `rm2`=0 (`v2`), `EF`=1 (`v3`), `LF`=0 (`v4`), trailing `v5`=0 *(unclear)*.
+Line 1: `<idx> <number> TRS2 <node1> <node2> <SizeAt0> <SizeAt1> <AttachHexa0> <AttachHexa1>` — `SizeAt[0]`/`SizeAt[1]` are the linked-element counts at node1/node2 (`0` here, hence `TRS2` not `LNK2`); `AttachHexa[0]`/`AttachHexa[1]` are the per-end embedment type: `0`=none, `1`=embedded in continuum, `2`=embedded in structural elements.
+Line 2 (material line): ` 13 0 0 1 0 0` → `mat1`=13 (`v0`), `mat2`=0 (`v1`), `mat3`=0 (`v2`), `EF`=1 (`v3`), `ULF`=0 (`v4`), `iLayer`=0 (`v5`).
 Line 3: prestress record count = `0` → no prestress lines follow.
 
 **With prestress**:
@@ -894,23 +922,23 @@ Line 3: prestress record count = `0` → no prestress lines follow.
 1
 1.000000000000e+02 0 2  1
 ```
-Prestress count = `1`, followed by one record: `1.000000000000e+02 0 2  1` → prestress force = `1.0e+02` (first field), followed by three integer fields (`0`, `2`, `1`) whose individual meanings are *(unclear)* — plausibly a load-function reference, a prestress-type code, and a stage/sequence index.
+Prestress count = `1`, followed by one record `<value> <LF> <EF> <DefWay>` = `1.000000000000e+02 0 2  1` → prestress `value`=100, `LF`=0 (no load-function-driven ramp — this one genuinely is a `LOAD_FUN` reference), `EF`=2 (existence function gating the prestress), `DefWay`=1 (prestress defined by force; `0`=by stress).
 
 ### 7.4 `.iff` — Fixed Anchor Zones
 
 Header count field: `"# number of Fixed Anchor Zones"`. Despite a non-zero header count in anchor models, the `.iff` block itself is typically completely blank (zero records). (The "Fixed anchor zone interface" text that does appear in some files is a material-catalog entry name, unrelated to this marker.) No populated `.iff` record syntax is available.
 
-### 7.5 Shell elements: `.ilg` + `.ilt` (thickness) + `.ily` (layers) + `.ish` (hinges)
+### 7.5 Shell elements: `.ilg` + `.ilt` (thickness) + `.ish` (hinges)
 
 **`.ilg`** — count-terminated. The count that governs this block is **not** the generic header field `"number of shell elements (*.ilg),(*.ilm)"` (typically `0` even in files with real shell elements) but the separate field `"number of Shell one layer elements"`. Hand-editors adding/removing `SXQ4`/`SHQ4` records must update this second count field, not the first.
 
-Type tags: `SXQ4` (4-node thin/one-layer shell, `pos=6`) and `SHQ4` (8-node thick shell, `pos=10`). Fields `mat`, `rm1`, `rm2`, `EF`, `LF`, `thick` (thickness-table index, resolved against `.ilt`) sit at `v[pos+4..pos+9]` respectively.
+Type tags: `SXQ4` (4-node thin/one-layer shell) and `SHQ4` (8-node thick shell). Trailing block: `splitPar` (2 values), `mat1 mat2 mat3 EF ULF`, then a shell-specific `thick` field (thickness-table index, resolved against `.ilt`), then the usual trailing `iLayer`.
 
 ```
 .ilg
 2 1 SXQ4 1 5 6 2 1 1 1 2 2 2 3 1 1 0
 ```
-`v0`=2 (idx), `v1`=1 (number), `v2`=`SXQ4`, `v3..v6`=nodes (1,5,6,2), `v7..v9`=1,1,1 *(unclear, same pattern as B8's three extra ints)*, `v10`=2 (mat), `v11`=2 (rm1), `v12`=2 (rm2), `v13`=3 (EF), `v14`=1 (LF), `v15`=1 (thickness-table index → `.ilt` record 1), `v16`=0 (trailing, unclear). No `SHQ4` example is available.
+`v0`=2 (idx), `v1`=1 (number), `v2`=`SXQ4`, `v3..v6`=nodes (1,5,6,2), `v7..v9`=1,1,1 (`splitPar`, unsplit — same pattern as `B8`'s three extra ints), `v10`=2 (`mat1`), `v11`=2 (`mat2`), `v12`=2 (`mat3`), `v13`=3 (`EF`), `v14`=1 (`ULF`), `v15`=1 (thickness-table index → `.ilt` record 1), `v16`=0 (`iLayer`). No `SHQ4` example is available.
 
 **`.ilt`** (thickness table) — blank-line-terminated list of thickness definitions referenced by the `thick` field above. Each entry starts with a `type` code; `type=0` is followed by one line giving a single float (uniform thickness); `type=1` would be followed by two float lines but no example is available.
 
@@ -929,13 +957,13 @@ The `type` field can also carry an optional trailing free-text label after it:
 ```
 Here `type`=0 with label `thickness=1m` (a human-readable echo of the value on the next line, `1`); the label is cosmetic/GUI-generated rather than functionally required.
 
-**`.ily`** (layers) and **`.ish`** (hinges) — both typically blank/empty; no populated example is available for either. **Note**: despite the name, `.ily` is *not* where a `"Shell Layered"` material's core/reinforcement layers live — those are fully defined within that material's own `GEOM->` block (§4.3.2/§4.4). `.ily`'s actual purpose is unknown.
+**`.ish`** (hinges) is typically blank/empty; no populated example is available. It's written by the same manager as `.gsh` (§7.17) — one line of shell-hinge (`RelaxationShell`) records — but its own populated record layout isn't documented here.
 
 ### 7.6 `.ipg` — Seepage elements
 
-Count-terminated: count = `"number of water Seepage's (*.ipg) (*.ipm)"`, typically `0`. Expected record layout:
+Count-terminated: count = `"number of water Seepage's (*.ipg) (*.ipm)"`, typically `0`. Expected record layout, by analogy with the confirmed pattern for other element types (§7 intro):
 ```
-<idx> <number> SPL2 <elem> <face> <node1> <node2> <mat> <EF> <LF>
+<idx> <number> SPL2 <elem> <face> <node1> <node2> <mat1> <mat2> <mat3> <EF> <ULF> <iLayer>
 ```
 each followed by one skipped line — but no real example is available to confirm this.
 
@@ -945,7 +973,7 @@ Header count field `"# number of convection element (*.ivg)"`, typically `0`. No
 
 ### 7.8 `.icg` — Contacts on continuum (volumic-volumic interfaces)
 
-Count-terminated: count = `"number of contact lines (*.icg), (*.icm)"`. Both `C_L2` (2D line contact) and `C_Q4` (3D quad-face contact) tags exist. Interface `type` codes (first field of the trailing data line): `0` = continuity with pressure, `1` = contact, `2` = continuity without pressure.
+Count-terminated: count = `"number of contact lines (*.icg), (*.icm)"`. Both `C_L2` (2D line contact) and `C_Q4` (3D quad-face contact) tags exist. Interface `type` codes (first field of the trailing data line): `0` = continuity with pressure, `1` = contact, `2` = continuity without pressure. An element can be excluded from ZSoil's automatic contact/interface generation entirely — see `.eie`, §13.3.
 
 **`C_L2` (2D)**:
 ```
@@ -956,11 +984,11 @@ Count-terminated: count = `"number of contact lines (*.icg), (*.icm)"`. Both `C_
 No name
 1 2 0 0 0.000000e+00
 ```
-Line 1: `<idx> <number> C_L2 <elem1> <face1> <elem2> <face2>` — `v3`/`v4` and `v5`/`v6` are each an `(element idx, local face)` pair (face numbering per §7.1), naming the two element edges being tied together.
-Line 2: 4-node connectivity ` 5 8 4 7` (the two coincident node pairs across the interface), followed by `1 1 0` — the second of these three trailing fields (here `1`) is the **count of trailing type/mat/EF/LF records** that follow (see the multi-record example below); the other two are *(unclear)*. Node order: `<elem1_faceNode_k+1> <elem1_faceNode_k> <elem2_faceNode_k> <elem2_faceNode_k+1>` — `elem1`'s face-node pair listed **reversed**, `elem2`'s **forward** (opposite winding, matching the two faces' opposite outward normals).
-Line 3: `0.000000e+00 0` *(unclear, plausibly initial gap + a flag)*.
+Line 1: `<idx> <number> C_L2 <elem1> <face1> <OppEleNum> <OppFaceNum>` — `elem1`/`face1` is an `(element idx, local face)` pair (face numbering per §7.1); `OppEleNum`/`OppFaceNum` name the element+face on the opposite side of the contact (`0` if none defined).
+Line 2: 4-node connectivity ` 5 8 4 7` (the two coincident node pairs across the interface), followed by `<genFullContinuity> <numSet> <iLayer>` = `1 1 0` — `genFullContinuity` is a continuity-override flag (setter semantics not confirmed), `numSet` is the **count of trailing type/mat/EF/ULF records** that follow (see the multi-record example below). Node order: `<elem1_faceNode_k+1> <elem1_faceNode_k> <elem2_faceNode_k> <elem2_faceNode_k+1>` — `elem1`'s face-node pair listed **reversed**, `elem2`'s **forward** (opposite winding, matching the two faces' opposite outward normals).
+Line 3: `<InitialGap> <InitialGapEF>` = `0.000000e+00 0` — the interface's initial-gap distance and its existence function.
 Line 4: interface name (`No name`).
-Line 5 (repeated per the record count from line 2): `<type> <mat> <EF> <LF> <trailing float>` = `1 2 0 0 0.000000e+00` → type=1 (contact), mat=2, EF=0, LF=0, trailing=0.0 *(unclear)*.
+Line 5 (repeated `numSet` times): `<type> <mat> <EF> <ULF> <initialGapNotUsed>` = `1 2 0 0 0.000000e+00` → type=1 (contact), mat=2, EF=0, ULF=0 (unloading function — a `LOAD_FUN` reference in the unloading role, §2.5/§7 intro), trailing=0.0 (a legacy field superseded by line 3's `InitialGap`, literally named `initialGapNotUsed` in source).
 
 **Note**: `type`=2 ("continuity without pressure") also appears as a plain rigid tie between two independently-numbered, geometrically-coincident mesh regions that don't share node IDs (not just at staging/material boundaries) — a duplicated-position node pair with different IDs isn't necessarily a meshing error; check for a `.icg` tie before assuming one. When splitting/refining a tied element, update the tie's `elem`/`face` reference to the new sub-element, and check for *other*, unrelated ties on the same element's other edges too.
 
@@ -1002,8 +1030,8 @@ No name
 0.000000e+00 0
 1 3 3 0 0.000000e+00
 ```
-Line 1: `<idx> <number> C_Q4 <cnt-number> <?> <?> <nsides> <side>` → `v3`=2 is the contact element number; `v6`=1 → single-sided; `v7`=2 → negative side active (`v6`=`2` ⇒ double-sided, both sides active).
-Line 2: interface name. Line 3: `<paired-elem> <paired-face>` = `1 3` (shell element 1, face 3). Line 4: 8-node connectivity. Line 5–6: *(unclear)*. Line 7: `<?> <mat> <EF> <LF> <trailing float>` = `1 3 3 0 0.000000e+00` → mat=3, EF=3, LF=0.
+Line 1: `<idx> <number> C_Q4 <cnt-elem> <cnt-face> <iLayer> <nsides> <activeFlg>` → `cnt-elem`=2/`cnt-face`=1 (the contact's own defining element+face), `iLayer`=0, `nsides`=1 (single-sided; `2`=double-sided), `activeFlg` bitmask (`1`=positive side active, `2`=negative side active, `3`=both — here `2`).
+Line 2: interface name. Line 3: `<paired-elem> <paired-face>` = `1 3` (shell element 1, face 3). Line 4: 8-node connectivity. Line 5–6: *(unclear)*. Line 7: `<?> <mat> <EF> <ULF> <trailing float>` = `1 3 3 0 0.000000e+00` → mat=3, EF=3, ULF=0 (unloading function — a `LOAD_FUN` reference in the unloading role).
 If double-sided, lines 3–7 repeat once more for the negative side.
 
 **`C_L2` paired with beam elements**:
@@ -1017,7 +1045,7 @@ No name
 0.000000e+00 0
 1 18 2 0 0.000000e+00
 ```
-Same 7-line-per-record structure as the `C_Q4` case: header line (here `v3`=482 is the beam element number the contact rides on), name, a `<?> <?>` line, 4-node connectivity, two skipped lines, and a final `<?> <mat> <EF> <LF> <trailing>` line. `v6` (here `1`) is `nsides`: `1` = single-sided (one `<paired-elem face>` block, as above); `2` = double-sided — a beam embedded in soil on both faces (e.g. a wall) gets **two** `<paired-elem face> / <connectivity> / <skip> / <skip> / <data>` blocks back to back, one per face, sharing the one header/name pair.
+Same 7-line-per-record structure as the `C_Q4` case: `<beam-elem> <side-idx> <iLayer> <nsides> <activeFlg>` header (here beam element 482, `iLayer`=0, `nsides`=1, `activeFlg`=2), name, a paired-elem/face line, 4-node connectivity, two skipped lines, and a final `<?> <mat> <EF> <ULF> <trailing>` line. `nsides`: `1` = single-sided (one `<paired-elem face>` block, as above); `2` = double-sided — a beam embedded in soil on both faces (e.g. a wall) gets **two** `<paired-elem face> / <connectivity> / <skip> / <skip> / <data>` blocks back to back, one per face, sharing the one header/name pair.
 
 **Double-sided example** (one beam segment, contacted on both faces — two blocks back to back, sharing one header/name pair):
 ```
@@ -1062,11 +1090,11 @@ Count-terminated: count = `"number of Piles"`. Structure: header line, then 4 al
 ...
 5.000000000000e-01 -7.500000000000e+00 5.000000000000e-01 1 8
 ```
-Header line: `<idx> <number> PILE <EF> <nSeg> <diam?> <?> ...` = `12 1 PILE 3 8 1.000000 0.250000 20 0 1 1 126 0 1 2` → `EF`=3 (`v3`), `nSeg`=8 (`v4` — the pile axis is traced by `nSeg+1`=9 points below). `v5`=1.0, `v6`=0.25 are plausibly diameter/perimeter-related; remaining fields *(unclear)*.
-Material line: ` 11 12 0 13 0` → `mat`=11 (`v0`), `qsmat`=12 (`v1`, skin-friction material), `qpmat`=13 (`v3`, tip-resistance material).
-Points: `nSeg+1`=9 lines of `<x> <y> <z> <flags>` tracing the pile axis; endpoints have one trailing flag, interior points have two — plausibly a segment-count/segment-index pair, but *(unclear)*.
+Header line: `<idx> <number> PILE <EF> <splitType> <SegLen> <MinSegLen> ...` = `12 1 PILE 3 8 1.000000 0.250000 20 0 1 1 126 0 1 2` → `EF`=3 (`v3`), `splitType`=8 (`v4` — despite the numeric value looking like a segment count, this is a subdivision-*method* selector: `0`=fixed segment count, `1`=by `SegLen`, `2`=automatic-equal, `3`=automatic-adaptive); `SegLen`=1.0 (`v5`), `MinSegLen`=0.25 (`v6`) — target and minimum axis-subdivision segment lengths (not diameter/perimeter); remaining fields include per-end link-attachment flags and the Qs/Qp model toggle below.
+Material line: ` 11 12 0 13 0` → `PILE_MAT`=11 (`v0`), `INTERF_MAT`=12 (`v1`, skin-friction/shaft material, i.e. `qsmat`), `v2`=0, `NODE_INTERF_MAT`=13 (`v3`, tip/node-interface material, i.e. `qpmat`), `v4`=0.
+Points: `nSeg+1`=9 lines tracing the pile axis, `<x> <y> <z> <nEle> <eleIdx...>` — not flags: each point's trailing data is the **count and global element numbers of the continuum (`.i0g`) elements it's found embedded in**, for soil-coupling stiffness assembly (endpoints typically embed in 1 element, interior points can span 2 where they sit on an element boundary).
 
-**Qs/Qp material selection**: the tip-resistance-model toggle lives in the header line's `v9` field and the material line's `qpmat` field: `v9`=0 (Qstanphi model, `qpmat`=0) vs `v9`=1 (constant Qs/Qp model, `qpmat` populated).
+**Qs/Qp material selection**: the tip-resistance-model toggle lives in the header line's `v9` field and the material line's `NODE_INTERF_MAT` (`qpmat`) field: `v9`=0 (Qstanphi model, `qpmat`=0) vs `v9`=1 (constant Qs/Qp model, `qpmat` populated).
 
 ### 7.12 `.gbh` — Boreholes
 
@@ -1132,7 +1160,7 @@ Cable geom. 1
 1.000000e+00 2.000000e-01
 0 0
 ```
-Structure per entry: a name line, a flag line whose last field is the control-point count (`1 1 1 2` → 2 points; `1 1 2 3` → 3 points), then that many `<relative-position 0..1> <offset>` point lines describing the cable profile along the host beam/truss (a straight profile for entry 1; a parabolic sag profile for entry 2). A trailing `0 0` line follows the last entry *(meaning unclear)*.
+Structure per entry: a name line, a flag line whose last field is the control-point count (`1 1 1 2` → 2 points; `1 1 2 3` → 3 points), then that many `<relative-position 0..1> <offset>` point lines describing the cable profile along the host beam/truss (a straight profile for entry 1; a parabolic sag profile for entry 2). **The trailing `0 0` line's origin is uncertain** — the geometry-catalog writer itself appends nothing after its last entry, so this may belong to a different, per-instance-usage record (`CableSets`/`BeamCableDef`) rather than `.bcb` proper; treat it as present-but-unexplained rather than assuming it's part of the geometry-catalog entry shape shown above.
 
 **`.bcl`** — typically blank; likely a duct/tendon-loss-coefficient catalog analogous to `.bcb`, but unconfirmed.
 
@@ -1140,30 +1168,21 @@ Structure per entry: a name line, a flag line whose last field is the control-po
 
 Typically blank/`0`. `.hex`/`.hef` header: `"# number of Heat exchangers"`. No populated examples are available for any of the three.
 
-### 7.17 `.gsh` — General shell
+### 7.17 `.gsh` — Shell-hinge opposite-element cache
 
-Count-terminated; the count matches `"number of Shell one layer elements"` (the same field that drives `.ilg`, §7.5).
+For **every** one-layer shell element in the model (not just ones with a hinge defined). Per shell face, it precomputes which continuum (`.i0g`) elements sit on the opposite side of that face **and don't already have an explicit interface/contact** (`.icg`/`.ics`) defined — a cache the hinge/relaxation mechanism (and possibly the contact system generally) uses to know what's directly attached without re-searching the mesh.
 
-**Large model, one line per shell**:
-```
-.gsh
-966
-65 0
-66 0
-67 0
-...
-1030 0
-```
-One line per shell, each `<element-number> <flag>`, flag = `0` throughout (default/inactive).
+The leading count is the number of one-layer shells (`"number of Shell one layer elements"`, the same field that drives `.ilg`, §7.5) — **not** the number of lines/records that follow, since each shell contributes one header+data block per relevant face:
 
-**Small model, inconsistent line count**: a declared count of `1` can be followed by **two** data lines, inconsistent with the one-line-per-shell pattern above:
 ```
-.gsh
-1
-2 1
-1 3
+<nShells>
+<shellGlobalNumber> <nOpp>          <- per shell face
+<OppEleNum> <OppFaceNum>            <- nOpp lines (0 or more), the continuum elements on the
+...                                    opposite side of this face without an existing contact
+...                                  <- repeated per face, per shell
 ```
-It is unclear whether this is a single two-line record or the count has a different meaning here *(meaning unclear)* — hand-editors relying on this marker should verify against a known-good ZSoil-exported file rather than this documentation alone.
+
+A block is written for every shell face regardless of `nOpp` — `nOpp=0` is a valid, common case (a header line with no following data lines), which is what the large-model example below shows throughout.
 
 ---
 
@@ -1171,11 +1190,13 @@ It is unclear whether this is a single two-line record or the count has a differ
 
 ### 8.1 Nodal boundary conditions (`.inb`)
 
-One line per constrained node, count from the header ("number of boundary conditions"). The record is `<idx> <nodeId> <flag>` followed by **one fixity block per translational DOF** — `[fixedFlag, prescribedValue, EF, LF, ?]` — and ends with a **trailing flag** selecting the local basis the fixity directions are expressed in: `0` = the model's global Cartesian axes, `1` = the local basis defined in `.ilb` (see "Local basis definitions" below).
+**`.inb` is not solely solid/displacement fixity data** it's a per-node dump of *every* kind of nodal condition the model has: solid-DOF fixity (below), plus, in the same file, water/heat/humidity nodal BCs and fluxes (§8.1's "Embedded field conditions" subsection). Count from the header ("number of boundary conditions") covers all of it combined.
 
-Within each block, **EF** (token 3) is an Existence Function reference: `0` = none (ordinary constant fixity); otherwise the fixity is only actually *enforced* while that EF's interval is active — outside it, the DOF is effectively free even though `fixedFlag` still reads `1`. **LF** (token 4) is a Load Function reference: `0` = none, `prescribedValue` stays constant; otherwise the prescribed value follows that function's time history instead. This is confirmed for 3D beam (6-DOF) nodes — see "3D beam nodes" below — but not independently checked for solid/continuum nodes, which may use a simpler convention. Token 5 remains unclear (always `0` in every example seen).
+**Solid/displacement fixity records**: one line per DOF-group. The record is `<idx> <nodeId> <flag>` followed by **one fixity block per translational DOF** — `[fixedFlag, prescribedValue, EF, LF, ULF]` — and ends with a **local-basis number**: `0` = the model's global Cartesian axes; any other value `N` = the `.ilb` record numbered `N` (see "Local basis definitions" below) — **this is a real index, not a binary flag**.
 
-- **3D** (block width 5, 19 tokens total, flags at token indices 3, 8, 13): `<idx> <nodeId> <flag> [xFixed xVal EF LF ?] [yFixed yVal EF LF ?] [zFixed zVal EF LF ?] <basisFlag>`.
+Within each block, **EF** (token 3) is an Existence Function reference: `0` = none (ordinary constant fixity); otherwise the fixity is only actually *enforced* while that EF's interval is active — outside it, the DOF is effectively free even though `fixedFlag` still reads `1`. **LF** (token 4) is a Load Function reference: `0` = none, `prescribedValue` stays constant; otherwise the prescribed value follows that function's time history instead. **ULF** (token 5) is an unloading-function reference — a `LOAD_FUN` entry number in the unloading role rather than the `LF` loading role (§2.5), same concept as every element/material record's trailing `ULF` field (§7 intro); always `0` in every example seen so far. Confirmed field-for-field from the writer above.
+
+- **3D** (block width 5, 19 tokens total, flags at token indices 3, 8, 13): `<idx> <nodeId> <flag> [xFixed xVal EF LF ULF] [yFixed yVal EF LF ULF] [zFixed zVal EF LF ULF] <basisNum>`.
 
   Example (node 1 fixed in x and z):
   ```
@@ -1209,7 +1230,7 @@ Node 1's rotation record (line 2) has all three rotational DOF nominally fixed (
 
 Node 2's records (lines 3–4) reference LF numbers instead of EF numbers in the same token position (`1`, `2`, `3`, matching `LOAD_FUN 3` entries such as `1 "dx"` / `2 "dz"` / `3 "roty"`) — each fixed DOF's prescribed value follows that load function's ramp over time, rather than staying constant. `EF 0` / `LF 0` in this position (as in the other `.inb` examples in this section) means no gating / no imposed ramp — ordinary constant fixity.
 
-**Continuum/solid nodes: `<flag>` selects the BC *type* (displacement vs. velocity vs. acceleration), and a node can carry more than one record.** Unlike the 3D-beam case above (where `<flag>` splits translation from rotation), for a 2D/3D continuum node `<flag>` selects what *kind* of quantity the record's fixity blocks prescribe: `1` = displacement, `4` = velocity, `6` = acceleration. A node can have **multiple `.inb` records**, one per type, all sharing the same `<nodeId>` — and when two records both prescribe the *same DOF*, **the more dynamic type takes priority** (acceleration over velocity over displacement) for that DOF, even though the lower-priority record's `fixedFlag` still reads `1`.
+**`<flag>` selects the BC *type* (displacement/velocity/acceleration, translation/rotation), and a node can carry more than one record.** The full code set: `1`=translation lock (displacement), `2`=rotation lock (displacement), `4`=translation velocity, `5`=rotation velocity, `6`=translation acceleration, `7`=rotation acceleration. A node can have **multiple `.inb` records**, one per type, all sharing the same `<nodeId>` — and when two records both prescribe the *same DOF*, **the more dynamic type takes priority** (acceleration over velocity over displacement) for that DOF, even though the lower-priority record's `fixedFlag` still reads `1`.
 
 This is the mechanism a base-excitation BC uses in practice: a `flag=1` record fixes a node's DOFs at a constant value (typically 0), and a second `flag=4` or `flag=6` record for the *same node* then overrides one of those DOFs with a `LOAD_FUN`-driven time history, leaving the other DOF(s) governed by the first record. Example — base node 1, `Uy` fixed at 0 (`flag=1` record), `Ux` driven by `LOAD_FUN 1`'s velocity time history scaled ×1.0 (`flag=4` record):
 ```
@@ -1219,7 +1240,7 @@ This is the mechanism a base-excitation BC uses in practice: a `flag=1` record f
 ```
 In the `flag=4` record's X-DOF block, the `LF` field (`1`) references `LOAD_FUN 1`; `prescribedValue` (`1.0`) is the scale multiplier applied to that function's tabulated values (same `prescribedValue`-as-`LF`-scale convention noted for `.inb` generally, §8.1 intro). The Y-DOF block in this record has `fixedFlag=0`, so it does not touch `Uy` — that stays governed by the first (`flag=1`) record.
 
-**Local basis definitions (`.ilb`)**, referenced by the trailing flag above: when that flag is `1`, the fixity directions are expressed in a local basis defined by an `.ilb` record instead of the global axes. `.ilb` records come in 3 modes, selected by a `<id> <MODE>` header line:
+**Local basis definitions (`.ilb`)**, referenced by the trailing local-basis number above: when nonzero, the fixity directions are expressed in the `.ilb` record with that number instead of the global axes. `.ilb` records come in 3 modes, selected by a `<id> <MODE>` header line:
 ```
 1   CARTESN_3D          <- 3×3 rotation matrix (3 lines), explicit local x/y/z axes
 1   VECTOR_3D           <- 1 line: normal vector to the local y-z plane
@@ -1231,6 +1252,18 @@ In the `flag=4` record's X-DOF block, the `LF` field (`1`) references `LOAD_FUN 
                             through this point)
 ```
 *(Field layout not independently verified against a populated `.ilb` example — treat as reliable but unconfirmed if precision matters.)*
+
+**Embedded field conditions (types `3` and `8`)**: besides the solid-fixity `<flag>` values above (`1`/`2`/`4`/`5`/`6`/`7`), `.inb` also carries direct nodal water/heat/humidity **BC** (`<flag>=3`) and **flux** (`<flag>=8`) records, written by the same per-node pass right alongside the fixity records above — a completely different, fixed-shape record, not built from DOF blocks:
+
+```
+<idx> <nodeId> <3|8> <waterFlag> <waterVal> <waterEF> <waterLF> [<waterULF>] <heatFlag> <heatVal> <heatEF> <heatLF> [<heatULF>] <humidityFlag> <humidityVal> <humidityEF> <humidityLF> [<humidityULF>]
+```
+
+`<idx>`/`<nodeId>` as usual, then the type code, then three groups — water, heat, humidity, in that order, each independently present or absent via its own `flag`. **Confirmed against a real file** (`boxw1.inp`, `createdWithVersion` `9.05`): each group is `[flag, value, EF, LF]` — **4 fields, no `ULF`** — 15 tokens total (`4 3 3 1 -2.000000000000e+001 0 0 0 0.000000000000e+000 0 0 0 0.000000000000e+000 0 0`: node 3, water BC value `-20`, EF/LF `0`). Current source writes a 5th `ULF` field per group (18 tokens total); this sample's older format predates it, matching the version-gating pattern seen throughout this format — when hand-editing, match the width already used elsewhere in the same file. `<flag>=8` (flux) reuses the identical shape as `<flag>=3` (BC) — only the leading type code differs.
+
+A node's *surface*-defined water/heat/humidity BCs (`.gwb`/`.gab`/`.gmb`, §8.4) get folded into this same `<flag>=3` mechanism once distributed onto individual nodes — confirmed directly in `boxw1.inp`: its `.gwb` block references nodes `3` and `6` with value `-20` each, and `.inb` records 4 and 8 are exactly `<flag>=3, node 3, val -20` / `<flag>=3, node 6, val -20`.
+
+**`.iwb`/`.iab`/`.imb`/`.iwf`/`.ihf`/`.iuf` (§8.4) appear to be effectively unused in practice**, not genuinely duplicated data: in `boxw1.inp`/`boxw2.inp`/`boxw3.inp` (the only corpus files with any populated water BC), the header count for `.iwb` is `0` and the file itself is empty, even though `.gwb`+`.inb` carry the real, active water BC. The whole `zsoil_inp_files` corpus (~90 files) has no populated `.iwb`/`.iab`/`.imb`/`.iwf`/`.ihf`/`.iuf` anywhere, so this couldn't be fully ruled out either way — but the direct evidence points to `.inb`'s embedded mechanism being what the GUI's surface-BC tool actually populates, with the separate nodal-BC files an unused/legacy path in this corpus.
 
 ### 8.2 `.inc` — named constraint/support groups
 
@@ -1300,18 +1333,30 @@ was found linking them by index.
 
 ### 8.4 Field (water/heat/humidity) boundary conditions
 
-The following markers cover boundary conditions for seepage/thermal/humidity analyses. No populated example is available for any of them — they are documented here only by their header-count purpose:
+The following markers cover boundary conditions for seepage/thermal/humidity analyses. Each nodal-level (`i`-prefixed) marker has a **`g`-prefixed counterpart** — but, unlike `.ipg`/`.spg` etc. (§13.4), this is **not** a pre-mesh/subdomain-level vs. post-mesh distinction. Both tiers operate on the already-meshed model; the difference is *how* the BC is specified: the `i`-marker is a flat list of individually-defined per-node BC entries (same shape as `.inb`, one line per node — and, per the empirical check below, effectively never actually populated), while the `g`-marker is a **gradient/pattern BC** — up to 4 reference nodes each carrying a value, applied across a selected group of already-meshed element faces — the same general mechanism as `.gsl`'s `UNI_LOAD`/`GRAD_LOAD` (§9.3), just for boundary conditions instead of loads:
 
-| Marker | Header count label |
-|---|---|
-| `.iwb` | number of water bound. cond. |
-| `.iph` | number of pressure Heads loads |
-| `.iwh` | number of Surface load defined by Pressure head |
-| `.iab` | number of Heat BC |
-| `.imb` | number of Humidity BC |
-| `.iwf` | number of water flux |
-| `.ihf` | number of heat flux |
-| `.iuf` | number of humidity flux |
+| Nodal marker (per-node list) | Header count label | Gradient/pattern counterpart |
+|---|---|---|
+| `.iwb` | number of water bound. cond. | `.gwb` |
+| `.iph` | number of pressure Heads loads | — |
+| `.iwh` | number of Surface load defined by Pressure head | — |
+| `.iab` | number of Heat BC | `.gab` |
+| `.imb` | number of Humidity BC | `.gmb` |
+| `.iwf` | number of water flux | `.gwf` |
+| `.ihf` | number of heat flux | `.ghf` |
+| `.iuf` | number of humidity flux | `.guf` |
+
+No populated example is available for the `i`-marker (nodal-list) tier. The `g`-marker (gradient/pattern) tier **is** confirmed, from `boxw1.inp`/`boxw2.inp`/`boxw3.inp`'s `.gwb`:
+```
+.gwb
+1 VARIABLE 2 0 0 1
+3 6 
+No name
+-2.000000000000e+001 
+-2.000000000000e+001 
+3 2
+```
+`<idx> VARIABLE <nnodes> <load_function> <exist_function> <?>` — here `nnodes`=2, `LF`=0, `EF`=0 (the trailing `1` doesn't match source's expected `unloading_function`/`siz` pair exactly — likely another instance of this file's older format predating a field added later, same pattern as `.inb`'s type-3 records above; not fully resolved). Then a line of `nnodes` reference node ids (`3 6`), a name line, `nnodes` value lines (both `-20` here — a uniform water-head value distributed via 2 equal reference points), and finally the face-selection this pattern applies to (`3 2` = element 3, face 2). See §8.1 for how this then gets folded into `.inb` as per-node type-`3` records.
 
 If a hand-edit needs to add one of these, the safest approach is to build a minimal seepage/thermal model in the ZSoil GUI and inspect the resulting block directly, rather than relying on this reference.
 
@@ -1555,9 +1600,19 @@ The remaining initial-condition markers had no non-zero example available, so on
 
 Given the `.izg`/`.iig` pattern above (id + element list + flags, then per-element data, with name position varying), these likely follow a similar "element list header, then per-element data block" shape — but this is an extrapolation, not confirmed.
 
-### 11.4 Initial velocities/accelerations (`.ivd`, `.svd`)
+### 11.4 Initial nodal displacement/velocity (`.idv`)
 
-Header count "number of initial velocities/accelerations" is typically `0`. Record syntax unconfirmed — relevant only for dynamic/seismic analyses with non-zero initial velocity fields.
+One `NodalIniVelAcc` record per node:
+
+```
+<number> <nodeNum> <elemNum> <objType>
+<lockU0> <valU0> <efU0> <lfU0>
+<lockV0> <valV0> <efV0> <lfV0>
+...                                <- repeated for DOFs 0-5 (6 DOFs, 12 data lines total)
+<label>
+```
+
+Per DOF, two lines: `<lock?> <val?> <ef?> <lf?>` — same `[lock, value, EF, LF]` shape as `.inb`'s fixity blocks (§8.1), minus the `ULF` field. **Despite the class/marker name ("Initial Velocity/Acceleration"), the two per-DOF lines are initial *displacement* (`U`) then initial *velocity* (`V`)** — confirmed via the GUI dialog binding `valU`→`m_Dep` ("Dép", French for displacement) and `valV`→`m_Vel` (velocity); there is no separate acceleration field. Typically `0`/empty; no populated example is available to confirm field values in practice — relevant only for dynamic/seismic analyses that start from a non-zero initial displacement or velocity state.
 
 ---
 
@@ -1573,7 +1628,7 @@ Typically used for reinforced-concrete beam/shell rebar layouts:
 <nLayers> <nMaterials> <?>                      <- per reinforcement set
 <setName>
 <materialId1> <materialId2> ...                  <- nMaterials material ids used by this set
-<?> <?> <lengthType> <distL> <distR> <yposType> <yDist> <zOffsetL> <zOffsetR> <?> <?> <diam> <nBars> <?> <prestress> <enabledFlag> <material>
+<status_flag> <Orientation> <lengthType> <distL> <distR> <yposType> <yDist> <zOffsetL> <zOffsetR> <alphaStart> <alphaEnd> <diam> <nBars> <total_area> <prestress> <ReinforcementType> <material>
 ...                                                <- nLayers layer lines, repeated per set
 <?> <nBeams> <?> <?>                              <- per reinforcement member
 <reinfSetName>                                    <- name of the .brc set this member uses (matched by name, not id)
@@ -1581,7 +1636,7 @@ Typically used for reinforced-concrete beam/shell rebar layouts:
 ...                                                <- repeated per member
 ```
 
-Per layer: `length_type` (how the layer's extent along the beam is defined), `dist_l`/`dist_r` (left/right distances), `ypos_type`/`ydist` (position across the section), `zoffset_l`/`zoffset_r`, `diam` (bar diameter), `nBars` (bar count), `prestress`, `enabled` (layer active flag, off when the corresponding field is `0`), and `material` (material id for the rebar itself, separate from the host beam's material). A reinforcement member links a named reinforcement set to a specific list of beam elements — i.e. the same rebar layout can be reused across many beams by reference name.
+Per layer: `status_flag` (the real enabled/active flag — **not** the field near the end of the line, despite that being the more intuitive guess), `Orientation` (radial/circumferential, axisymmetric only), `length_type` (how the layer's extent along the beam is defined), `dist_l`/`dist_r` (left/right distances), `ypos_type`/`ydist` (position across the section), `zoffset_l`/`zoffset_r`, `alphaStart`/`alphaEnd` (circular-section angles, same as the layered-beam `GEOM->` fiber record, §4.3.2), `diam` (bar diameter), `nBars` (bar count), `total_area`, `prestress`, `ReinforcementType` (`0`=total area, `1`=density — not an enabled flag), and `material` (material id for the rebar itself, separate from the host beam's material). A reinforcement member links a named reinforcement set to a specific list of beam elements — i.e. the same rebar layout can be reused across many beams by reference name.
 
 ---
 
@@ -1615,33 +1670,66 @@ A simple element-id list for each of the DRM domain's interior and exterior elem
 <eleId1> <eleId2> ...        <- nElements ids (exterior elements)
 ```
 
-### 13.3 Other structural-mesh markers (unconfirmed)
+### 13.3 Elements excluded from automatic contact generation (`.eie`)
 
-The following markers appear in the sequence but are typically empty:
+Not related to mesh tying itself — it's the list of elements flagged (via the GUI's "Exclude from contact" toggle) to be **skipped when ZSoil auto-generates interface/contact elements** (`.icg`/`.ics`, §7.8/§7.9) that would otherwise be placed on them automatically. Format:
+```
+<count>
+<idx1> <idx2> ... <idx10>
+<idx11> ... <idx20>
+...                        <- global element indices (§7 intro's <idx>), 10 per line, across any
+                              element type (continuum, shell, membrane, infinite, truss, beam)
+```
+`<count>` elements follow, wrapped at 10 per line; on read, each flags the corresponding element's `ExcludeFromContact` state. No populated example is available, but the read/write mechanism itself is fully confirmed from source.
 
-| Marker | Notes |
-|---|---|
-| `.eie` | No matching header label found; purpose unclear. |
-| `.crc` | Purpose unclear. |
-| `.idv` | Purpose unclear. |
-| `.spg`, `.svg`, `.scg` | Cluster of three markers near `.sdm`/`.psd` — likely further subdomain/staging metadata given their position in the sequence (§6.4). |
-| `.gos` | Geometrical surfaces (element connectivity + boundary line list) — a write-only marker, confirming it exists and has a defined purpose in the format even though no populated syntax is available. |
-| `.cld` | Typically empty; purpose unclear. |
-| `.igl` | See §6.5 (auxiliary points). |
+### 13.4 Other structural-mesh markers
+
+**`.ivd`, `.svd` — Viscous dampers.** Not initial conditions (see the correction note in §11.4) — these are dashpot/damper elements attached to element faces (same family as `.gsl`/`.ple`'s face-attached mechanisms), used for absorbing/"quiet" boundaries in dynamic analyses. `.ivd` covers already-meshed element faces (`SetOfFaces`/`SetOfEdges`), `.svd` the subdomain/macro-face equivalent before meshing (`SetOfSubDomainFaces`/`SetOfSubDomainEdges`) — the same i-prefix/s-prefix pairing as `.spg`/`.svg`/`.scg` below. No populated example available; typically empty.
+
+**`.spg`, `.svg`, `.scg` — subdomain-level counterparts of already-documented element markers.** Confirmed via source: each is written by the *same* method as its plain counterpart, just called on `SetOfSubDomainFaces`/`SetOfSubDomainEdges` instead of `SetOfFaces`/`SetOfEdges` — i.e. these hold the macro/subdomain-level definition (before mesh generation) of the same mechanism, not separate features:
+- `.spg` ↔ `.ipg` (Seepage elements, §7.6) — `writeSeePagesOn`.
+- `.svg` ↔ `.ivg` (Convection elements, §7.7) — `writeConvectionsOn`.
+- `.scg` ↔ `.icg` (Contacts on continuum, §7.8) — `writeSlidesOn`.
+
+All three typically empty; record shape is expected to mirror the corresponding subdomain (`.sdm`, §6.4) face/edge referencing rather than the meshed-element one, but no populated example is available to confirm the exact fields.
+
+**`.crc` — Contact on beam/truss elements (`ContactRC`).** A contact/interface defined directly on a beam or truss (`LinearElement`) parent, using the same `ContactParamList` structure (type/mat/EF/ULF) as `.icg`/`.ics`/`.cld` — distinct from `.ics`'s `C_L2` "paired with beam" form. **Notably write-only in the current reader**: the `.crc`-reading code in `readINP` is present but entirely commented out, so any `.crc` content is silently discarded when a file is reopened rather than round-tripped. No populated example is available.
+
+**`.cld` — Node-to-face contact/mesh-tying (`ContactLD`).** A different mesh-tying mechanism from `.fac`/`.mrt` (§13.1): a `ContactLD` record ties a named group of "contactor" nodes (`ContactorNodes`, the tied/slave side) to a named group of "master" faces (`MasterFaces`), again via the same `ContactParamList` (type/mat/EF/ULF) pattern. The file bundles three sub-writers back to back — the contactor-node-group catalog (`SetOfContactors`), the master-face-group catalog (`SetOfMasters`), and the `ContactLD` tie records themselves (`SetOfContactLD`) — but the exact per-record field layout wasn't traced beyond this. No populated example is available.
+
+**`.gos` — Geometrical surfaces.** **Corrects an earlier version of this doc**, which called this "write-only" — it's read as well as written, just typically empty in the sample corpus available. Populated syntax still not documented here.
+
+**`.igl`** — see §6.5 (auxiliary points).
 
 If a hand-edit needs to touch any of these, the most reliable path is still to reproduce the change in the ZSoil GUI on a minimal file and diff the result, rather than authoring from this reference.
 
 ---
 
-## 14. Quick Reference
+## 14. Other Data
 
-### 14.1 All 91 dot-prefixed markers, in file order
+### 14.1 Construction/display layer names (`.ily`)
+
+Despite sitting in the marker sequence next to the shell-related markers (§7.5), `.ily` is **not shell-specific at all** — it's the model-wide **construction/display layer name table**, i.e. the definitions that every element/material record's trailing `iLayer` field (§7 intro) indexes into:
+```
+<count>            <- number of named layers, excluding the implicit "Layer 0" (index 0, always
+                      present in the GUI, never written here)
+<layerName1>
+<layerName2>
+...                <- count lines, one per named layer (indices 1, 2, 3, ... — index 0 is "Layer 0")
+```
+`iLayer=0` on an element record means the default "Layer 0" (unnamed, always visible); `iLayer=N>0` indexes this list's `N`th entry (1-based). A `"Shell Layered"` material's core/reinforcement layers are unrelated — those are fully defined within that material's own `GEOM->` block (§4.3.2/§4.4).
+
+---
+
+## 15. Quick Reference
+
+### 15.1 All 91 dot-prefixed markers, in file order
 
 The same 91 markers, in the same order, appear in every v26 file (only their contents vary). "Doc §" is where each marker is documented; a dash means the marker is typically empty and could not be documented beyond its position in the sequence — treat these as confirmed-to-exist-but-unpopulated, not as unused/removable.
 
 | # | Marker | Purpose | Doc § |
 |---|---|---|---|
-| 1 | `.icf` | Contact evolution function references | §15 (mention only) |
+| 1 | `.icf` | Contact evolution function references | §16 (mention only) |
 | 2 | `.ing` | Nodes | §6.1 |
 | 3 | `.inl` | Nodal loads | §9.1 |
 | 4 | `.inb` | Nodal boundary conditions | §8.1 |
@@ -1672,22 +1760,22 @@ The same 91 markers, in the same order, appear in every v26 file (only their con
 | 29 | `.iwb` | Water boundary conditions | §8.4 |
 | 30 | `.ibf` | Beam loads (legacy — superseded by `.ple`) | §9.2 |
 | 31 | `.glk` | Local bases | §6.5 |
-| 32 | `.ilb` | Local basis definitions (CARTESN_3D/VECTOR_3D/CYLINDR_3D), referenced by `.inb`'s trailing flag | §8.1 |
+| 32 | `.ilb` | Local basis definitions (CARTESN_3D/VECTOR_3D/CYLINDR_3D), referenced by `.inb`'s trailing local-basis number | §8.1 |
 | 33 | `.ihf` | Heat flux (BC) | §8.4 |
 | 34 | `.iuf` | Humidity flux (BC) | §8.4 |
-| 35 | `.ghf` | *(likely macro/geometry-level heat flux)* | — |
-| 36 | `.guf` | *(likely macro/geometry-level humidity flux)* | — |
-| 37 | `.gab` | *(likely macro/geometry-level heat BC)* | — |
-| 38 | `.gmb` | *(likely macro/geometry-level humidity BC)* | — |
+| 35 | `.ghf` | Heat flux, gradient/pattern form (↔ `.ihf`) | §8.4 |
+| 36 | `.guf` | Humidity flux, gradient/pattern form (↔ `.iuf`) | §8.4 |
+| 37 | `.gab` | Heat BC, gradient/pattern form (↔ `.iab`) | §8.4 |
+| 38 | `.gmb` | Humidity BC, gradient/pattern form (↔ `.imb`) | §8.4 |
 | 39 | `.gsl` | Surface loads (UNI_LOAD, GRAD_LOAD) | §9.3 |
-| 40 | `.gwb` | *(likely macro/geometry-level water BC)* | — |
-| 41 | `.gwf` | *(likely macro/geometry-level water flux)* | — |
-| 42 | `.idg` | *(purpose unclear)* | — |
+| 40 | `.gwb` | Water BC, gradient/pattern form (↔ `.iwb`) | §8.4 |
+| 41 | `.gwf` | Water flux, gradient/pattern form (↔ `.iwf`) | §8.4 |
+| 42 | `.idg` | No writer found anywhere in source — see §2.2's stub-file note | §2.2 |
 | 43 | `.isd` | Data super elements | §6.5 |
-| 44 | `.ily` | Shell layers | §7.5 |
+| 44 | `.ily` | Construction/display layer names (feeds `iLayer`, §7 intro — not shell-specific) | §14.1 |
 | 45 | `.inm` | Nodal masses | §10.1 |
 | 46 | `.iem` | Element masses | §10.2 |
-| 47 | `.cld` | *(purpose unclear)* | §13.3 |
+| 47 | `.cld` | Node-to-face contact/mesh-tying (`ContactLD`) | §13.4 |
 | 48 | `.igl` | Auxiliary points | §6.5 |
 | 49 | `.axs` | Axes | §6.5 |
 | 50 | `.pob` | Geometry points | §6.2 |
@@ -1696,22 +1784,22 @@ The same 91 markers, in the same order, appear in every v26 file (only their con
 | 53 | `.psd` | Subdomain-related | §6.4 |
 | 54 | `.fac` | Face groups / mesh tying | §13.1 |
 | 55 | `.mrt` | Mesh-tying related | §13.1 |
-| 56 | `.idv` | *(purpose unclear)* | §13.3 |
-| 57 | `.crc` | *(purpose unclear)* | §13.3 |
-| 58 | `.spg` | *(subdomain/staging-related)* | §13.3 |
-| 59 | `.svg` | *(subdomain/staging-related)* | §13.3 |
-| 60 | `.scg` | *(subdomain/staging-related)* | §13.3 |
-| 61 | `.gos` | Geometrical surfaces (write-only) | §13.3 |
+| 56 | `.idv` | Initial nodal displacement/velocity (despite the marker name, no acceleration field) | §11.4 |
+| 57 | `.crc` | Contact on beam/truss elements (write-only — reader commented out) | §13.4 |
+| 58 | `.spg` | Seepage elements, subdomain-level (↔ `.ipg`) | §13.4 |
+| 59 | `.svg` | Convection elements, subdomain-level (↔ `.ivg`) | §13.4 |
+| 60 | `.scg` | Contacts on continuum, subdomain-level (↔ `.icg`) | §13.4 |
+| 61 | `.gos` | Geometrical surfaces | §13.4 |
 | 62 | `.ish` | Shell hinges | §7.5 |
 | 63 | `.ist` | Constant eps0 (initial strain) | §11.3 |
 | 64 | `.goa` | Subdomain-related | §6.4 |
 | 65 | `.sg0` | Subdomain-related | §6.4 |
 | 66 | `.gnl` | Nodal links | §7.10 |
 | 67 | `.pil` | Piles | §7.11 |
-| 68 | `.eie` | *(purpose unclear)* | §13.3 |
+| 68 | `.eie` | Elements excluded from automatic contact generation | §13.3 |
 | 69 | `.gbh` | Boreholes | §7.12 |
-| 70 | `.ivd` | Initial velocities | §11.4 |
-| 71 | `.svd` | Initial accelerations | §11.4 |
+| 70 | `.ivd` | Viscous dampers (element faces) | §13.4 |
+| 71 | `.svd` | Viscous dampers, subdomain-level | §13.4 |
 | 72 | `.pbc` | Periodic boundary conditions | §8.3 |
 | 73 | `.drz` | DRM domain, interior elements | §13.2 |
 | 74 | `.dre` | DRM domain, exterior elements | §13.2 |
@@ -1719,7 +1807,7 @@ The same 91 markers, in the same order, appear in every v26 file (only their con
 | 76 | `.anh` | Anchors | §7.14 |
 | 77 | `.grp` | Groups | §7.16 |
 | 78 | `.apl` | Auxiliary planes | §6.5 |
-| 79 | `.gsh` | General shell (per-shell flag list) | §7.17 |
+| 79 | `.gsh` | Shell-hinge opposite-element cache (not "general shell") | §7.17 |
 | 80 | `.ics` | Contacts on structures | §7.9 |
 | 81 | `.scs` | Structural-contact related | §7.9 |
 | 82 | `.ims` | Structural-contact related | §7.9 |
@@ -1733,7 +1821,7 @@ The same 91 markers, in the same order, appear in every v26 file (only their con
 | 90 | `.pth` | Movement paths (moving loads) | §9.5 |
 | 91 | `.hef` | Heat exchanger heat fluxes | §7.16 |
 
-### 14.2 Element type tags
+### 15.2 Element type tags
 
 | Tag | Meaning | Marker |
 |---|---|---|
@@ -1756,13 +1844,13 @@ The same 91 markers, in the same order, appear in every v26 file (only their con
 | `UNI_LOAD` / `GRAD_LOAD` | Uniform / gradient surface load | `.gsl` |
 | `POINT_LOAD` / `LINE_LOAD` / `SURF_LOAD` | Loads on elements | `.ple` |
 
-### 14.3 Material sub-tags
+### 15.3 Material sub-tags
 
 `GEOM->`, `DENS->`, `FLOW->`, `CREEP->`, `NONL->`, `ELAS->`, `HEAT->`, `HUMID->`, `INIS->`, `STAB->`, `DISC->`, `DAMP->`, `MAIN->` — see §4.3 for full field-level detail per tag, and §4.2 for which formulations use which tags.
 
 ---
 
-## 15. Worked Example
+## 16. Worked Example
 
 This walks a complete, minimal 2D file end to end — a single `Q4` continuum element on 4 nodes, 1 material, 4 boundary conditions, and every other block empty. It's small enough to read in full, and every non-empty line in it is explained below. Line numbers refer to this file.
 
@@ -1792,7 +1880,7 @@ This walks a complete, minimal 2D file end to end — a single `Q4` continuum el
 | 318–322 | `.inb` / 4 lines | 4 boundary conditions — nodes 1–2 fixed in x&y, nodes 3–4 fixed in y only (16-token / older layout, §8.1). |
 | 324–408 | `.inc` / 4 named blocks (`No name` ×4) | Per-node constraint-group data mirroring the 4 `.inb` entries (§8.2). |
 | 410–411 | `.i0g` / `1 1 Q4 1 2 3 4 1 1 1 0 0 0 0 0` | The single `Q4` continuum element, connecting nodes 1-2-3-4, material 1 (§7). |
-| 413–607 | `.ibg` through `.hex` — **81 markers, every one empty** | Every element/BC/load/geometry marker not otherwise used by this minimal model — each present as a bare marker line followed by a blank line (or `0`), per the "every marker always present" rule of §2.2. See [§14 Quick Reference](#14-quick-reference) for what each of these markers is for. |
+| 413–607 | `.ibg` through `.hex` — **81 markers, every one empty** | Every element/BC/load/geometry marker not otherwise used by this minimal model — each present as a bare marker line followed by a blank line (or `0`), per the "every marker always present" rule of §2.2. See [§15 Quick Reference](#15-quick-reference) for what each of these markers is for. |
 | 609–616 | `.ple` / *(blank)* / `.pme` / *(blank)* / `.pth` / *(blank)* / `.hef` / *(blank)* | Final markers in the fixed sequence, all empty — end of file. |
 
 **Takeaway**: even a maximally minimal model touches all 91 dot-markers — the file format doesn't omit unused sections, it just leaves them empty. When hand-editing an existing file, the safest strategy is exactly what this table demonstrates: locate the marker for the section you need by name, and edit only its block, leaving the surrounding empty markers untouched.

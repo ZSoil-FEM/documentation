@@ -7,6 +7,174 @@ Internal working notes: how each part of the reference was derived, so confidenc
 - `zsoil_tools\zsoil_inp.py` — the Python parser (`read_inp()`), used to cross-check field order/meaning wherever it actually parses a given marker. It only reads ~25 of the 91 dot-markers; the rest are file-inspection-only.
 - Interactive exploration of the ZSoil 2026 v26.03 GUI's Materials dialogs, against a live model at `C:\Mandats\M1366_Geodev\Q&A testing\Unittesting\testing\NL_beams_shells` (files: `NL_beam_traction.inp`, `NL_beam_traction_forceCtrl.inp`, `NL_shell_traction.inp`, `NL_shell_bending - Copy.inp`).
 - A second interactive GUI session against a different live model, `2D_anchor_disp_s1m` at `C:\Mandats\M1366_Geodev\Q&A testing\Unittesting\testing\anchors`, covering the **Continuum** material formulation (material "Soil", `Elastic`) — see the dedicated note below.
+- **ZSoil preprocessor source code** (2026-08, once the user made it available): `C:\Users\mprei\Perforce\GEODEV_MP-LNV-NOV25_2294\v26\ZSoil\Z_Prep3D\` (preprocessor GUI/geometry/element/BC code), `...\v26\ZSoil\zmate\` (material/analysis-control library), `...\v26\ZSoil\H\constant.h` (shared enums). This is the highest-confidence source used so far — actual `.inp`-writing C++, not inference from samples or GUI dialogs. See the dedicated section below for what it resolved/corrected.
+
+## Corpus spot-check (`zsoil_inp_files`) — resolved the `.inb`/`.iwb` open question, plus sanity checks
+
+User asked to check the real sample corpus at
+`C:\Users\mprei\Perforce\GEODEV_MP-LNV-NOV25_2294\Benchmarking\Unittests\zsoil_inp_files\`
+(~90 files) directly, on the heels of the `.inb` rescan below. Findings:
+
+- **Scanned all ~90 files for populated `.iwb`/`.iab`/`.imb`/`.iwf`/`.ihf`/`.iuf`/`.gwb`/`.gab`/
+  `.gmb`**: only `.gwb` is ever populated, in exactly `boxw1.inp`/`boxw2.inp`/`boxw3.inp`. Every
+  `.iwb`-family file is blank in all ~90 files, including those same three.
+- **`boxw1.inp` settles the `.inb`/`.iwb` open question empirically** (as much as this corpus
+  can): its `.gwb` block (`1 VARIABLE 2 0 0 1` / `3 6` / `No name` / `-20` / `-20` / `3 2`) —
+  reference nodes 3 and 6, value −20 each, applied to element 3 face 2 — has its values show up
+  verbatim in `.inb` as two type-`3` records (`4 3 3 1 -2.0e+01 0 0 0 ...` and `8 6 3 1 -2.0e+01 0
+  0 0 ...`, nodes 3 and 6, value −20). Meanwhile `.iwb`'s own header count is `0` and the file is
+  empty. This is real evidence (not proof for every possible authoring path) that `.inb`'s
+  embedded type-3 mechanism is what the GUI's surface-BC tool actually populates, and `.iwb`
+  itself is unused in this corpus — added to §8.1/§8.4 accordingly, phrased as "appears to be
+  effectively unused" rather than a categorical claim, since only one authoring path was observed.
+- **Field-count correction from the same record**: source's current `writeNodalBCOn`/
+  `SurfaceBC::writeGeomOn` write a 5-field `[flag,value,EF,LF,ULF]` group per quantity (water/
+  heat/humidity) and a 6-field `.gwb` header line — but `boxw1.inp` (`createdWithVersion 9.05`)
+  shows only 4 fields per group (no `ULF`) and 4 header fields (not 5) on `.gwb`'s first line.
+  Consistent with the version-gating pattern seen everywhere else in this format; documented both
+  the current-source shape and the observed older-file shape, flagged as version-dependent rather
+  than picking one as "the" answer.
+- **`.gwb`'s exact middle two header fields** (position after `nnodes`, expected
+  `load_function exist_function` per source) aren't fully pinned down against the observed `0 0
+  1` — plausibly `LF=0, EF=0`, then either `unloading_function` or `siz` for the trailing `1`, but
+  which one wasn't resolved. Flagged as unresolved rather than guessed in the doc.
+- **Bonus sanity check**: `.idg` confirmed blank in `boxw1.inp`/`boxd1.inp`/`pile.inp` — consistent
+  with the "no writer, blanket-stub-created" finding from the earlier `.idg` investigation.
+
+## §8.1 `.inb` full rescan (user asked to re-verify — section had grown large)
+
+Traced the entire write chain from `NodesManager::writeBoundaryConditionsOn`
+(`nodemngr.cpp:494`) → `GeomPoint::writeNthNodalCondition` (`GeomPoint.cpp:2426`), which calls,
+in order, into the *same open `.inb` file*: `writeSolidBoundaryConditionOn` →
+`BoundaryCondition::writeBCOn` (`boundarycondition.cpp:369`, the fixity records already
+documented), then `writeNodalBCOn` (`GeomPoint.cpp:2283`, type `3` — nodal water/heat/humidity
+BC), then `writeNodalFluxOn` (`GeomPoint.cpp:2353`, type `8` — nodal water/heat/humidity flux),
+then a final loop converting `SurfToNodBCList` entries (i.e. `.gwb`/`.gab`/`.gmb` surface BCs
+distributed onto individual nodes, §8.4) into more type-`3` records. This was previously entirely
+undocumented — the doc only described the fixity (type `1`/`2`/`4`/`5`/`6`/`7`) records.
+
+- **`writeBCOn` re-read carefully**: confirms the `[lock, valU, efU, lfU, ulfU]` 5-field-per-DOF
+  shape exactly as already documented, *and* resolves the trailing field precisely —
+  `LocBaseNum = IsLocalDefined ? locBas.number : 0`. This is a real `.ilb` record number, not a
+  binary 0/1 flag as the doc previously claimed (a leftover from before the field's exact
+  semantics were traced this carefully). Corrected throughout §8.1.
+- **Type `3`/`8` records**: field-exact from `GeomPoint::writeNodalBCOn`/`writeNodalFluxOn`'s
+  literal `fprintf` format strings — `"%d %d 3 %d %16.12le %d %d %d %d %16.12le %d %d %d %d
+  %16.12le %d %d %d\n"` (and the same shape with `8` for flux). 18 tokens, three
+  `[flag,value,EF,LF,ULF]` groups (water/heat/humidity) after `<idx> <nodeId> <type>`.
+- **Open, not resolved**: `.iwb`/`.iab`/`.imb`/`.iwf`/`.ihf`/`.iuf` (§8.4) are written via a
+  *different* code path (`NodalObjManager::writeOn`, `NodalObjManager.CPP:242`, the generic
+  `NodalObj`/`writeElementCmpOn` pattern shared with `.idv`) from what looks like the same
+  underlying `NodalBC` objects (`GeomPoint::nodalWaterBc` etc.) that `writeNodalBCOn` also writes
+  into `.inb` as type-3 records. Confirmed **both** writers are live (both called unconditionally
+  from `geometricalmodel.cpp`'s `writeOn`) and **both** readers are live
+  (`GetNodalSolidBCManager()->readSoildBCFrom(..., "inb", ...)` at line 596 and
+  `GetNodalFluidBCManager()->readFrom(..., "iwb", ...)` at line 603, both unconditional). Did not
+  trace far enough to determine whether this is genuine on-disk duplication of the same BC, two
+  BCs that happen to look similar, or one path silently wins over the other at read time — a real
+  open question, not a gap in searching. If picked up again: compare a real file's `.inb` type-3
+  entries against its `.iwb` entries for the same node to settle it empirically, since source
+  alone left it ambiguous.
+
+## §2.2/§15.1 `.idg` — genuinely no writer; found the assembly mechanism instead
+
+Same targeted-grep approach as every marker in this batch, but this one came back **empty** —
+zero hits for `"idg"` (case-insensitive, substring, whole tree) in either `Z_Prep3D` or `zmate`.
+Sanity-checked against a real sample file (`Hotline\20230202 #47 GwangWook\Hwanghak
+Tunnel5err.inp:44317`) to confirm `.idg` really exists at the documented position (it does,
+empty, between `.gwf` and `.isd`) — so this wasn't a mis-transcribed marker name.
+
+Explanation found by chasing the assembly step instead of a per-marker writer: recall from the
+very first exploration round that `GeometricalModel::writeOn` (`Z_Prep3D`) writes most markers to
+**separate per-extension fragment files** (`<basename>.xxx`), then calls `ZMATE_SaveINP` to
+assemble the final `.inp` — at the time, `ZMATE_SaveINP` itself wasn't found in any available
+source. It's now visible in `zmate\zmate.cpp:1462`, and it calls `ZMATE_CompressFiles`
+(`zmate.cpp:998`), which does:
+```cpp
+for (int i = 0; i < numberOfFiles; i++)
+    CompressFile(name, PrePro_Ext[i], Inpfile);
+```
+`PrePro_Ext[]`/`numberOfFiles` are populated once, at startup, by `InitPreProFiles`
+(`zmate.cpp:394`) reading `<PathCFG>\CFG\prepro.fil` — **not present in this Perforce sync**
+(searched the whole workspace, no hits), so the literal ordered list with its 91 entries and any
+comments couldn't be read directly. But `ZMATE_CreateNoExistingPreproFile` (`zmate.cpp:930`) — run
+before every save — settles the question regardless: it loops the same `PrePro_Ext[]` list and
+`fstream file1(fileName, ios::out)`-creates (i.e. **truncates to empty**) any fragment file that
+doesn't already exist. Since no code anywhere writes a `.idg` fragment, this stub-creation step is
+the *only* thing that ever touches it — confirming `.idg` is a genuine always-empty placeholder
+slot in the current codebase, not a gap in this search. Used the same finding to explain the
+doc's pre-existing "every marker present, even empty" claim in §2.2 — now stated as a confirmed
+mechanism (fixed external extension list + blanket stub-creation) rather than just an observed fact.
+
+**Follow-up, done immediately**: the `.ghf`/`.guf`/`.gwf`/`.gmb`/`.gwb`/`.gab` cluster near §8.4 was
+in fact fully resolved as a side effect of reading the `.idg` neighborhood
+(`geometricalmodel.cpp:1256-1291`) — all six have confirmed writers: each pairs with an
+already-documented nodal-level (`i`-prefixed) marker, e.g. `GetSurfHeatBCManager()->writeOn(name,
+"gab")` sits right next to `GetNodalHeatBCManager()->writeOn(name, "iab")`.
+
+**Correction (user caught it — "did you mean subdomain-level instead of surface-level?")**: the
+first write-up of this pairing called it the same `g`/`i` = macro/subdomain-level-vs-meshed
+pairing as `.ipg`/`.spg` (§13.4). That's wrong — checked `SurfBCManager.h`: `createVariableBC`/
+`createGradientBC` take `std::vector<ElemPart*>& faces` (already-*meshed* faces, not pre-mesh
+subdomain geometry) plus `GeomPoint** _nds` (up to 4 reference nodes, matching `SurfaceBC::values[4]`
+in `SurfaceBC.h`). `SurfBCManager::writeOn` (`SurfBCManager.cpp:297`) casts its objects to
+`SurfLoad*` and calls `writeGeomOn` — the *same* writer used for `.gsl`'s surface loads. So the
+real distinction is: `i`-marker = flat per-node BC list (like `.inb`), `g`-marker = a
+gradient/pattern BC (reference-node values distributed across a face selection), mechanically
+the BC-equivalent of `.gsl`'s `UNI_LOAD`/`GRAD_LOAD` (§9.3) — not a mesh-timing tier at all. Both
+operate on the same already-meshed model. Rewrote §8.4 and the six Quick Reference rows to say
+this instead. `.ipg`/`.spg` etc. (§13.4) are unaffected by this correction — those genuinely are
+`SetOfFaces` vs. `SetOfSubDomainFaces`, a real pre-mesh/post-mesh distinction, directly confirmed
+and distinct from this `SurfBCManager` mechanism.
+
+## §13.4 remaining markers (`.crc`,`.idv`,`.spg`,`.svg`,`.scg`,`.gos`,`.cld`) — found the writers, resolved by request
+
+Same targeted-grep approach, applied to every marker still in the old "unconfirmed" table. All write call sites are in `geometricalmodel.cpp`'s `writeOn` (writer, ~line 1230-1381) and `readINP` (reader, ~line 480-620, 755-777).
+
+- **`.spg`/`.svg`/`.scg`**: confirmed by direct code comparison — `.spg` calls the exact same `writeSeePagesOn` as `.ipg` (line 1297-1307) but on `GetSetOfSubDomainFaces()`/`GetSetOfSubDomainEdges()` instead of `GetSetOfFaces()`/`GetSetOfEdges()`; same pattern for `.svg`↔`.ivg` (`writeConvectionsOn`, 1313-1324) and `.scg`↔`.icg` (`writeSlidesOn`, 1349-1360). High confidence — literally the same function pointer, different receiver object.
+- **`.gos`**: `GetGeomSurfManager()->writeOn(fname, "gos", SaveIcfVersionNumber)` (line 1235) AND `->readFrom(fname, "gos")` (line 481, inside `CreateObjTab()`'s read path) — both present, so the doc's prior "write-only" claim was simply wrong (an artifact of not having found the reader in the earlier pass, not a real asymmetry).
+- **`.crc`**: writer at line 1375 (`GetContactRCManager()->writeOn(file)`, logged `"Contact RC"`), reader at line 761-768 but **the entire block is wrapped in `/* ... */`** — genuinely dead/disabled code, not just unused. `ContactRC : public T3DElement` (`ContactRC.h:17`) has `ContactParamList params` and `LinearElement *parent` — so it's a contact record hung directly off a beam/truss element, same param shape as `.icg`/`.ics`/`.cld`. Didn't chase what "RC" stands for beyond the class name itself (no comment found explaining the acronym) — described the mechanism, not the acronym, in the main doc.
+- **`.cld`**: three sub-writers share the file — `SetOfContactors`, `SetOfMasters`, `SetOfContactLD` (lines 769-777 reader, matching writer not individually re-read but same triple pattern expected). `ContactLD : public GraphicalObject` (`ContactLD.h:18`) has `ContactParamList params`, `ContactorNodes *cnt`, `MasterFaces *mst` — a node-group-to-face-group tie, distinct mechanism from `.fac`/`.mrt`'s mesh tying (§13.1). Did not read `ContactorNodes.cpp`/`MasterFaces.cpp`/the three managers' actual `writeOn` bodies, so no field-level layout — mechanism-level only.
+- **`.idv`**: `GetNodalSolidIniCondManager()->writeOn(fname, "idv")` (line 1246, right after `.inc`'s `NodalSolidBCManager::writeOn`) / `readFrom(fname, "idv", DeliveredVersion)` (line 612, logged `"Solid IC"`). Confirmed this manager holds `NodalIniVelAcc` objects specifically by finding `GeomPoint.h:60`'s `NodalIniVelAcc* nodalIniVelAcc` member and the dedicated `NodalIniVelAcc.h`/`.cpp`/`_Dlg.cpp` files.
+  - **Follow-up (field-level, found on request)**: the record-level write/read functions aren't named `writeOn`/`readFrom` (those are inherited/no-ops here) but `writeElementCmpOn`/`readElementCmpFrom` (`NodalIniVelAcc.cpp:250,270`) — missed on the first pass because the grep for this only tried the generic names. Record: `<number> <ndNum> <elNum> <objType>` then, per DOF (6 total): `<lockU> <valU> <efU> <lfU>` / `<lockV> <valV> <efV> <lfV>`, then a trailing label line. **Which field is which physical quantity was the open question — resolved via `NodalIniVelAcc_Dlg.cpp:449-465`**: `dlg.m_Vel[i] = bc->valV[i]` and `dlg.m_Dep[i] = bc->valU[i]` — `V`=velocity, `U`=`m_Dep`="Dép(lacement)" (French, matching this codebase's other French-origin naming, e.g. `FCTCHARG.CPP`="fonction de chargement"). So despite the class/marker being named "IniVelAcc", the two stored quantities are **initial displacement and initial velocity**, not velocity and acceleration — there is no acceleration field anywhere in this class. This is a real, slightly misleading legacy name, not a documentation error on our part once traced to source.
+
+**Correction discovered as a side effect, not directly asked about but too significant to leave wrong**: `.ivd`/`.svd` were documented in the (pre-this-session) doc as "Initial velocities/accelerations", filed under §11.4. That's wrong — `SetOfParts::writeViscDampOn` (`SetOfParts.cpp:3669`) writes `ElemPart`-attached `ViscDamp` objects (`ElemPart.h:317`, `BOOL hasViscDamp()`) — genuine viscous-damper elements on faces, an `ElementOnFace` family member (`ElemPart::writeNthElementOnFaceOn`, same generic dispatch used elsewhere for face-attached mechanisms), nothing to do with initial conditions. `.ivd` uses `SetOfFaces`/`SetOfEdges` (meshed elements), `.svd` uses `SetOfSubDomainFaces`/`SetOfSubDomainEdges` (subdomain/macro, same i/s-prefix pairing as `.spg`/`.svg`/`.scg`) — confirmed at `geometricalmodel.cpp:1329-1339`. Moved this content to §13.4 and rewrote §11.4 around `.idv` instead. Did not find `ViscDamp`'s own field-level write function, so §13.4's `.ivd`/`.svd` entry is mechanism-level only, same limitation as the others in this batch.
+
+## §13.3 `.eie` — found the writer, resolved by request
+
+Same targeted-grep approach as `.gsh`/`.ily`, for `.eie`/`"eie"`. One hit: `Z_Prep3D\geometricalmodel.cpp:1544/904`, both write and read call sites, each preceded by the comment `// excluded from interface element` and logged as `tc.SetLog("Excluded faces")`. Implementation at `geometricalmodel.cpp:2437` (`GeometricalModel::WriteExludedElemFromContact`) → `GetExludedElemFromContact(v)` (line 2422) collects flagged elements across every element-manager type (`QuadsManager`, `HexasManager`, `ShellsManager`, `Shells1LManager`, `MembranesManager`, `InfiniteElemManager`, `TrussesManager`, `BeamsManager`) into one list, then `writeElemList` (line 2463) writes `<count>` followed by global element numbers 10-per-line. `ReadExludedElemFromContact` (line 2447) reads the same shape and calls `element->SetExcludeFromContact(1)` per entry — confirming this is a GUI "Exclude from contact" toggle's persisted state, used to suppress automatic `.icg`/`.ics` interface generation on specific elements. Simple enough that no further reading was needed. Not investigated: the corresponding `ExludeSelectedElemFromContact`/`SetExcludeFromContact` setter side (how a user actually toggles this in the GUI), and whether a real populated `.eie` sample exists anywhere in the corpus to spot-check the write format against.
+
+## §7.5/§7 intro `.ily` — found the writer, resolved by request
+
+Same targeted-grep approach as `.gsh` below, this time for `.ily`/`"ily"`. Two hits: `Z_Prep3D\geometricalmodel.cpp:1577` (`layers->WriteTo(file)`, the writer) and `zmate\MakeDat.cpp:6463` (the `.dat`-compiler's reader, unrelated to `.inp` semantics). `layers` is a `Layers*` member of `GeometricalModel` — its class (`Layers.h`/`Layers.cpp`) is the GUI's construction/display-layer manager (`Add`/`Modify`/`Delete`/`Merge`, a `CurLayer` concept, visibility flags), **not** anything shell/fiber-related — the marker name is misleading, same class of trap as `.gsh`. `Layers::WriteTo` (`Layers.cpp:134`): `fprintf(file, "%d\n", siz-1)` then one line per layer name for `i=1..siz-1` — index 0 ("Layer 0") is pushed in the constructor and always present but deliberately never written. This is exactly the layer-name table that every element/material record's trailing `iLayer` field (found during the earlier six-agent pass, §7 intro) indexes into — confirms `iLayer` wasn't just a plausible guess, it's a real cross-reference into a real table. `ReadFrom` (`Layers.cpp:147`) confirms the same shape symmetrically. Not investigated: whether `VisFlg` (per-layer visibility) or anything beyond the name is ever written to `.ily` itself (`WriteTo` only writes the name — visibility isn't persisted here, consistent with `ReadFrom` defaulting every loaded layer's visibility to `1`).
+
+## §7.17 `.gsh` — found the writer, resolved by request
+
+The user asked directly whether a parser/writer for `.gsh` had been found — it hadn't been searched for specifically in the earlier six-agent pass. A targeted grep for `.gsh`/`"gsh"` across `Z_Prep3D` found exactly one hit: `geometricalmodel.cpp:1343`, `GetHingesManager()->writeAttachedElementsOn(name, "gsh")`, called immediately after `GetHingesManager()->writeOn(name, "ish")` (`.ish`, shell hinges) — i.e. `.gsh` is hinge-adjacent infrastructure, not literally "General shell" as the doc's old section title guessed from the marker name alone. Full implementation read at `ElemOnPartManager.cpp:776` (`HingesManager::writeAttachedElementsOn`): iterates every one-layer shell (`Shells1LManager::GetT3DElements`, not filtered to shells with an actual hinge object — the `attachedShells`/`M_SelBin` computed earlier in the function is dead code, never used), and for each shell face, finds opposite continuum elements via `HexaedronFace::GetOppositeContinuumElemFaces` and writes only those without an existing `hasSlide()` (i.e. no `.icg`/`.ics` contact already defined). This resolves the doc's old "inconsistent line count" confusion completely — the leading count is the shell count (confirmed, matches the doc's prior observation), but each shell contributes a variable number of lines (`1 + nOpp`) depending on how many uncontacted opposite elements its face(s) have, not a fixed 1 line/shell.
+
+Not otherwise investigated: whether a one-layer shell can contribute more than one header+data block (if `GetHexaedronFaces()` returns more than one non-null face) — the large-model example's exact 1:1 shell-count-to-line-count match is consistent with 1 relevant face per shell in that particular model, but isn't proof the mechanism never emits more than one block per shell in general. `.ish`'s own record format (the shell-hinge/`RelaxationShell` objects themselves) also wasn't read in this pass — only its write call site was located.
+
+## Source-code pass (Z_Prep3D / zmate / constant.h) — corrections and resolutions
+
+Six parallel Explore agents read the real `.inp` writer/reader code (`GeometricalModel::writeOn`/`readINP` in `geometricalmodel.cpp`; the per-tag `operator<<` functions in `zmate`), then a direct read of `constant.h` resolved one more item. Full agent transcripts aren't retained, but every finding below was cross-checked against the doc's existing examples before being applied — field values in the doc's own quoted examples were re-derived under the new field mapping and confirmed self-consistent (notably `FLOW->`'s default example: `v18`=isotropic-flow=`1` now correctly explains why `v0=v1=v2` in that example, and `v24`=`Ks`=`1e+38` now makes physical sense as an inert/incompressible default, neither of which held together under the old field mapping).
+
+**Corrections (the doc had these actively wrong, not just unconfirmed):**
+- Every element/beam/truss/shell material-line's `rm1`/`rm2` fields don't exist — they're `mat2`/`mat3`, confirmed via `SingleT3DElement::setDefaultParameters()` (`singlet3delement.cpp:105`) and `constant.h`'s `eParType` enum (`T3D_PARAM_MAT1,MAT2,MAT3,EF,UNLFCT`). Per the user directly: `mat1`/`mat2`/`mat3` are `InitialMaterial`/`ReplacementMaterial1`/`ReplacementMaterial2` — a material-replacement mechanism, not generic "secondary/tertiary material slots" as first described. Exact replacement-trigger mechanism not otherwise confirmed in this pass.
+- That same enum shows the field every such record calls **`LF`** is actually **`UNLFCT`** (unloading function) — still a `LOAD_FUN` entry number, but used in the unloading role rather than the loading role (per the user's correction: ULF and LF reference the *same* `LOAD_FUN` list, just different usages of an entry, not two separate function catalogs). Same concept as `.inb`'s already-identified `ULF` field. Applied throughout §7 and cross-referenced from §2.5/§8.1.
+- B8 face-node table: source-exact from `Hexaedron8::createHexaedronFaces()` (`hexa8.cpp:425`) — face 1 is `1,4,3,2`, not `1,2,3,4` as previously written from visual/pattern inference; faces 3/5 no longer need an "inferred" hedge.
+- `FLOW->` continuum: `v0/v1/v2` are `Kx/Ky/Kz` (not `kx/kz` with an unexplained duplicate); `v4-v9` are two 3-component orientation vectors `m`/`v`, not flags; **`v14`/`v27` were swapped** (v14 is really `SkipGravityTerm`, v27 is `krFunction` Irmay/Mualem); the `v18/v21/v22` Bishop trio is resolved and `v18` turns out to be `isotropicFlow`, unrelated to Bishop at all (`dataFlow.cpp:322`).
+- `ELAS->`'s "3 unclear secondary lines" are load-function/spatial-data/evolution-function refs for E/nu, not anisotropy or damping data (`dataElastic.cpp:117,793`).
+- `Fiber Shell`'s leading `GEOM->` field is `Area_M` ("used only for membranes"), not a type code (`dataGeometry.cpp:1298`, confirmed via the actual `.inp` writer `GenericGroup::WriteDataToFile`/`dataGeneric.cpp:152` — a separate `WriteData()` method on the same classes writes a different field order but is unused for `.inp`, a trap worth remembering if this file is revisited).
+- `Shell Layered` `GEOM->`'s `v[1]`/`v[2]`: `v[1]` **is** the shear correction factor itself (previously an open question — thought to be missing from the record entirely); `v[2]` is `nlayer`, the integration-layer count, not a mysterious constant (`dataGeometry.cpp:895`).
+- `.brc` per-layer record: the enabled/active flag is field 1 (`status_flag`), not field 16; field 16 is `ReinforcementType` (`Reinforcement_Sets.cpp:161`).
+- `.pil` header `v5,v6`: `SplitDef::SegLen`/`MinSegLen` (target/min axis-segment lengths), not diameter/perimeter (`EmbeddedLinearElement.cpp:658`, `SplitDef.h:24`).
+- `.itg` prestress record and the 4 "unclear" trailing fields on line 1: fully resolved via `trussload.cpp:109` and `truss.cpp:497-531` (`AttachHexa[]`/`SizeAt[]`, explains the `LNK2`/`TRS2` tag choice).
+- `.ibg`'s "six always-zero floats" line: a real centroid-offset mechanism (`BarDirection::writeOn`, `BarDirection.cpp:1091`), not opaque.
+- `.ics`'s "`<?> <?>`" pair before `nsides`/`side`: one field, `iLayer`, not two (`SlideStr.cpp:1041`).
+
+**Gaps filled** (previously unconfirmed, now resolved from source — see `inp-file-format.md` itself for the resulting field tables, not repeated here): `BUTTONS=`'s full 14-flag mapping (`dataMaterial.cpp:62-75`); `CONTROL`'s fields 9-11 and second-line fields 5-10 (`DATAJOB.CPP:89`); `DYN_CONTROL`/`PSH_CONTROL` full field layouts (`DynCtrl.cpp`, `PshNode.cpp`); `NONL_GEOM`/`CONSTRUCTION`/`THM_SETTINGS`/`BISHOP_FLAG`/`PROJECT_PRESELECTION` (`DATAJOB.CPP:598`, `MultIniState.cpp:117`, `TwoPhaseSettings.cpp:50`, `PrjPreSel.cpp`); `DENS->`'s 4-line structure (`dataDens.cpp:146`); `CREEP->`'s 14+ fields (`dataCreep.cpp:551`, matches the doc's own long-standing example exactly); `HEAT->`/`HUMID->` (`dataHeat.cpp:592`, `dataHumidity.cpp:256`); `INIS->` continuum fields 4-12 (`dataInitialState.cpp:167` — beam `INIS->` still not located, real beam materials mostly don't attach this group); `STAB->` (`dataStab.cpp:141`); `NONL->` Fiber Shell's remaining fields (`dataNonLinear.cpp:197`); `LAYERED_BEAM_COMPONENTS`'s `v[2]` = `g` unit weight (`CompositeMat.cpp:52` — genuinely just left at its unedited default of 25 in both the concrete and steel example lines, not vestigial); `SIG_EPS_FUN`'s two version-gated formats (`dataFun.cpp:273,534`); `LOAD_FUN`'s flags-line bit (`FC_FLAG_SKIP_TIME_STEPS`) and the line-3 `FlagBitCode` field (`dataFcCh.cpp:330,474`); the header-count table's entries 33/49/88 as confirmed upstream copy-paste label bugs (`GenInf.cpp:44-145`); `.pil`'s interior-point trailing data (coordinates + embedding-`.i0g`-element list, not flags — same pattern as the already-documented `.anh`, `EmbeddedLinearElement.cpp:802`); `.icg`'s `OppEleNum`/`OppFaceNum`, `genFullContinuity`/`InitialGap`/`initialGapNotUsed` (`slide.cpp:103,566`, `ContactParam.cpp:95`); `.ics`'s `iLayer`/`nsides`/`activeFlg` header (`SlideStr.cpp:1041`); `.inb`'s previously-"unclear" token 5 as `ULF`, and BC type codes 5/7 (rotation velocity/acceleration) alongside the already-known 1/2/4/6 (`boundarycondition.cpp:369`).
+
+**Explicitly not resolved, left flagged in the doc**: `T3D_PARAM_*`'s literal enum values beyond ordering (values live where `constant.h` doesn't declare them, only the enum names/order do); per-continuum-model `NONL->` field layouts for Mohr-Coulomb/Hoek-Brown/Drucker-Prager/Cam-Clay/Hujeux/HS-small-strain/Duncan-Chang/Cap model (classes located — `Mohr_Coulomb.cpp`, `Hoek_Brown.cpp`, `NonLinearDruckerPrager.cpp`, etc., all `GenericNonLinearGroup` subclasses in `dataNonLinear.h` — but not individually field-mapped); `.pil`'s `code` field and `.icg`'s `genFullContinuity` setter semantics (declared/written, no setter/enum found in this checkout); beam `INIS->`; `.bcb`'s trailing `0 0` line (the geometry-catalog writer itself appends nothing after its last entry — this line may belong to a different class, `CableSets.cpp`/`BeamCableDef`, not confirmed either way).
 
 ## §3 File Header
 
@@ -105,6 +273,23 @@ Confirmed by checking that the referenced `.i0g` element(s)' node coordinates ac
 ## §8.1 continuum-node `.inb` flag values (1/4/6) and multi-record priority
 
 Same source/session as the `.pbc`/`.apl` entries above, from building and debugging `Model_N5.inp`'s base boundary condition (originally acceleration-driven, then changed to velocity-driven by the user mid-session — both went through this same mechanism, just with `flag=6` vs `flag=4`). Established across this and an earlier (compacted) part of the same overall effort: for continuum/solid nodes `<flag>` selects BC type (`1`=displacement, `4`=velocity, `6`=acceleration), a node can carry multiple `.inb` records (one per type), and when two records prescribe the same DOF the more dynamic type wins (acceleration > velocity > displacement) even though the lower-priority record's `fixedFlag` still reads `1`. Not derived from the corpus or GUI — confirmed empirically by observing the intended behavior (a base node with a `flag=1` record fixing it at 0 plus a `flag=4`/`flag=6` record referencing a `LOAD_FUN` on the same DOF) actually driving the node as intended rather than staying fixed. This is a different meaning of `<flag>` than the 3D-beam translation/rotation split documented just above it in §8.1 — don't conflate the two.
+
+## §4.2/§4.3.1/§4.3.7/§4.3.10 `HS-small strain stiffness` continuum material
+
+Source: not the corpus, not the GUI — an A/B diff test between two `.inp` files from the NUMGE2027
+project (`C:\Mandats\M100\papers\NUMGE2027\calc\zsoil\shear_column_hss\Model_HSS_N40.inp` vs.
+`Model_HSSm0_N40.inp`), both hand-built by the user via the ZSoil GUI, differing only in one GUI
+toggle ("pressure-independent" stiffness). `diff`-ing the two files isolated exactly which raw
+fields that toggle controls: `ELAS->` field 3 (`0.5`→`0`) and two values in the following `NONL->`
+block's first numeric line (auto-recomputed, not independently settable). This is a strong,
+mechanical confirmation for field 3's identity (`m`, the stress-exponent) specifically — it is not
+a GUI walkthrough, so no other `ELAS->` field position was independently isolated the same way;
+the doc's guesses for fields 1/2/4/9 (`G0_ref`/`nu_ur`/`pref`/`gamma_0.7`) are value/position
+analogies to the standard Hardening-Soil-small parameter set, not confirmed the way field 3 is —
+flag this distinction if extending the entry further. The `INIS->` cross-reference (same Ko-state
+field shape as the already-GUI-confirmed plain continuum `Elastic` case, §4 "GUI-verified Continuum
+material" above) is a structural-match inference, not a fresh GUI confirmation for this specific
+formulation.
 
 ## Corpus coverage caveats (applies throughout §7–§13)
 
