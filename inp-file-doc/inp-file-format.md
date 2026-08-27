@@ -299,18 +299,18 @@ The second line holds the "sharpened" tolerances used for kinematic (displacemen
 
 The same "named-set" pattern (keyword, count, then that many named sets) applies to:
 
-- **`DYN_CONTROL <n>`** — dynamic-analysis solver control (same general kind of tolerance/iteration settings, extended for time integration). Each named set is 5 lines:
+- **`DYN_CONTROL <n>`** — dynamic-analysis solver control (same general kind of tolerance/iteration settings, extended for time integration). Each named set is:
 
   ```
   <name>
-  <?> <?> <?> <?> <scheme> <alpha> <beta> <gamma>
-  <?> <g> <?> <?> <?>
-  <?>
-  <alpha2> <?> <?>
-  <?> <?> <?> <?> <?>
+  <TypeMass> <RotInertia> <alphaDamp> <betaDamp> <AlgorType> <alpha> <beta> <gamma>
+  <MassFilter> <Acc> <Dir_x> <Dir_y> <Dir_z>
+  <localBaseFlg>                              <- if 1, a local-basis definition line follows
+  <alphaAlgorFluid> <thetaAlgor> <includeDarcyLaw>
+  <DefWay> <w1> <w2> <xsi1> <xsi2>
   ```
 
-  Line 2, fields 6–8 are the **HHT-α time-integration parameters**: `alpha`, then the dependent Newmark `beta`/`gamma` — confirmed via the standard identities `beta = (1-alpha)^2/4`, `gamma = 0.5-alpha` (e.g. `alpha=-0.3` gives `beta=0.4225`, `gamma=0.8`, matching a real example exactly). Field 5 (`scheme`, `3` in every example seen) is presumably an integration-scheme selector; fields 1–4 unclear. Line 3, field 2 is gravitational acceleration `g` (`9.80655` in every example seen); the rest of that line and the following two lines are unclear, except line 5's **first field, which is `alpha` again** — the same value as line 2 field 6, apparently a redundant/secondary copy rather than an independent override (in every example checked so far the two agree; if a real file ever shows them *disagreeing*, that would need investigating — which one wins is not established).
+  `TypeMass` (`0`=lumped, `1`=consistent mass matrix) and `RotInertia` (include rotational inertia, flag) mirror `PSH_CONTROL`'s fields of the same name. `alphaDamp`/`betaDamp` are the Rayleigh mass-/stiffness-proportional damping coefficients for the dynamic analysis — same pair as a material's `DAMP->`, but set at the analysis level; the GUI can alternatively derive them from `DefWay`/`w1`/`w2`/`xsi1`/`xsi2` (two target frequencies `w1`/`w2` and their damping ratios `xsi1`/`xsi2`, via the standard two-frequency Rayleigh-damping evaluator) instead of entering them directly. `AlgorType` selects the time-integration scheme (`0`=Implicit Newmark/displacement, `1`=Implicit Newmark/acceleration, `2`=Explicit Newmark, `3`=HHT-α/displacement, `4`=HHT-α/acceleration); `alpha`/`beta`/`gamma` are the HHT-α parameters, `beta`/`gamma` dependent on `alpha` (`beta=(1-alpha)^2/4`, `gamma=0.5-alpha`) for the HHT schemes. `MassFilter` enables a direction-selective mass filter, whose directions are `Dir_x`/`Dir_y`/`Dir_z`; `Acc` is gravitational acceleration. `alphaAlgorFluid`/`thetaAlgor` are the fluid-phase counterparts of `alpha` and a θ-method time-integration parameter, for two-phase (coupled flow) dynamic analyses — **not a redundant copy of `alpha`**, despite often numerically matching it in simple (single-phase) examples; `includeDarcyLaw` is a flag for whether Darcy flow is included in the dynamic step.
 - **`PSH_CONTROL <n>`** — **pushover-analysis solver control**, distinct struct from `CONTROL`. Each named set is 2 lines: `<name>` then `<TypeMass> <RotInertia> <MassFilter> <ForcePattern> <Acc> <DirPsh_x> <DirPsh_y> <DirPsh_z>` (`ForcePattern`: `0`=auto, `1`=constant, `2`=linear — only if `2`, a further line `<DForce_x,y,z> <Xo_x,y,z>` follows).
 
 Following the solver-control blocks:
@@ -345,7 +345,7 @@ DRIVERS <n>
 
 `<name>` (line 1 of each record) is a free-form label — it does **not** need to match anything defined elsewhere (in a real example it was literally `N-R`, coincidentally the same string as one of `CONTROL`'s named settings sets, but functioning as an independent label, not a reference). `<solver-settings-name>` (line 3) **does** need to match a name defined in the `CONTROL` block (e.g. `Default`) — using an unrecognized name here is what produces a "DRIVER ... not listed under CONTROL" failure.
 
-The numeric line (line 2) is `<type> <?> <t_start> <t_end> <t_incr> <mult> <?>`, with `<type>` a **0-indexed** `DriversType` code (`C_DriversType.py` in ZSoilPy3: `INITIAL_STATE=1, STABILITY=2, TIME_DEPENDENT=3, ARC_LENGTH=4, DYNAMICS=5, PUSHOVER=6, EIGENMODES=7`, so 0-indexed **DYNAMICS = 4**, confirmed against real examples using exactly that value for a genuine dynamic phase) — the `init` driver's own `<type>` is `0` (0-indexed `INITIAL_STATE`).
+The numeric line (line 2) is `<type> <?> <t_start> <t_end> <t_incr> <mult> <?>`, with `<type>` a **0-indexed** `DriversType` code (`INITIAL_STATE=1, STABILITY=2, TIME_DEPENDENT=3, ARC_LENGTH=4, DYNAMICS=5, PUSHOVER=6, EIGENMODES=7`, so 0-indexed **DYNAMICS = 4**) — the `init` driver's own `<type>` is `0` (0-indexed `INITIAL_STATE`).
 
 After all `<n>+1` driver records, **4 more lines appear before the `RAM_MAXIMUM`/`SOLVER_TYP`/... keyword sequence starts**, not accounted for by the driver-record pattern above and not yet decoded — e.g.:
 ```
@@ -446,7 +446,10 @@ ZSoil organizes every material by **Continuum/Structure type** (which element gr
 | Continuum | `True Mohr-Coulomb` | same tag set, `NONL->` populated | The actual MC hexagonal criterion (not a DP approximation) — see §4.3.7. |
 | Continuum | `Multilaminate` / `Multilam. Menetrey` | same tag set, `NONL->` populated | Discrete-lamination-plane model — up to 3 planes, each with its own friction/dilatancy/cohesion/tension strength; the `Menetrey` variant adds a combined global failure criterion on top. See §4.3.7. |
 | Continuum | `Mohr-Coulomb` / `Hoek-Brown` / `Rankine` / `Huber-Mises` (the "Menetrey-Willam" family) | same tag set, `NONL->` populated | **All four share the literal `<type>` string `"Menetrey"`** (DAT code `PLAS_ME_V`) — the GUI's friendly catalog names ("Mohr-Coulomb (M-W)" etc.) are display-only and never written to the file. Which of the 4 a given material actually is lives entirely inside its `NONL->` block's own `Mentype` field — see §4.3.7. |
-| Continuum | *(other nonlinear soil models: Duncan-Chang, Cap model, Cam-Clay, Hujeux)* | same tag set, `NONL->` populated | Distinct model classes, not yet field-mapped. |
+| Continuum | `Duncan Chang` | same tag set, `NONL->` populated | Hyperbolic stress-strain model with variable Poisson's ratio — see §4.3.7. |
+| Continuum | `Cap Model` | same tag set, `NONL->` populated | DP-based shear surface + a preconsolidation-pressure cap — see §4.3.7. |
+| Continuum | `Cam Clay` | same tag set, `NONL->` populated | Critical-state model — see §4.3.7. |
+| Continuum | `Hujeux` | same tag set, `NONL->` populated | Multi-mechanism elastoplastic model (monotonic/cyclic, deviatoric/volumetric) — see §4.3.7. |
 | Continuum / shell fiber layer | `Concrete elastic plastic damage` / `Concrete elastic plastic damage for shell` | same tag set, `NONL->` populated | Lee-Fenves concrete damage-plasticity model (DAT code `CDPM_1_V`) — see §4.3.7. |
 | Beams (`BEL2`, §7.2) | `Elastic Beam` (plain) | `ELAS->` `GEOM->` `MAIN->` `DENS->` `FLOW->` `CREEP->` `NONL->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | `GEOM->` selects Profiles/User/Values cross-section (§4.3.2). |
 | Beams | `Elastic Beam` (layered/composite) | same tag set; `GEOM->` carries embedded reinforcement fibers | Same type *string* as plain `Elastic Beam` — distinguished only by `BUTTONS=`'s `Non linear` flag, index 6, repurposed as an `IsLayeredCrossSection` selector (§4.3.2). Fibers reference `LAYERED_BEAM_COMPONENTS` (§4.4). |
@@ -587,6 +590,42 @@ The 24 parameters, in order (index 0–23), with GUI tooltip text quoted where t
 | 21 | `lc_c` | characteristic length / sample size, compression |
 | 22 | `lc_RC_flag` | "enforce characteristic length for RC structures" flag |
 | 23 | `lc_RC` | that enforced characteristic length value |
+
+**`NONL->` for `Duncan Chang` — fully field-mapped.** One line, 11 fields:
+
+```
+Version GlobCoh GlobPhi PL Rf Pa NLK n G F d
+```
+
+`Version` — a model-version selector; `GlobCoh`/`GlobPhi` — cohesion, friction angle; `PL` — a limiting-stress parameter; `Rf` — failure ratio (default `0.8`); `Pa` — reference/atmospheric pressure (default `1.0`, the hyperbolic model's stress-normalization pressure); `NLK` — modulus number `K` (default `1000`); `n` — modulus stress-dependency exponent (default `0.5`); `G`, `F`, `d` — the classic Kulhawy-Duncan variable-Poisson's-ratio triple (`ν = G − F·log₁₀(σ₃/Pa)`, `d` a bulk-modulus-related cutoff parameter) — no GUI tooltip text was found for these three in source, so the formula is standard-literature knowledge, not independently confirmed field-by-field.
+
+**`NONL->` for `Cap Model` — fully field-mapped.** 3 lines:
+
+```
+CMAdjust GlobPhi GlobPsi GlobCoh CMCuttOff CMCutOffVal NLLambda NLPco NLRo CM_OCR [CMXsi if ver≥14.03]
+GlobPhi.Lf GlobPsi.Lf GlobCoh.Lf CMCutOffVal.Lf NLPco.Lf [NLLambda.Lf if ver≥13.09]
+GlobPhi.Sdata GlobPsi.Sdata GlobCoh.Sdata CMCutOffVal.Sdata NLPco.Sdata [NLLambda.Sdata if ver≥13.09]
+```
+
+The shear surface is DP-based, so `CMAdjust` reuses the exact same "size adjustment" enum as standalone `Drucker Prager`'s `DPAdjust` (§4.3.7 above: external/internal/plane-strain/elastic/intermediate), and `CMXsi` is its "DP ksi" companion (only present for the intermediate mode, same as `DPxsi`). Then friction/dilatancy/cohesion, an I₁ tension-cutoff flag+value (`CMCuttOff`/`CMCutOffVal`), `NLLambda` — slope of primary consolidation on an `e`-`ln(p)` plot, `NLPco` — initial preconsolidation pressure (the cap's position), `NLRo` — initial cap shape ratio (aspect ratio `R`), `CM_OCR` — overconsolidation ratio. **`SigVM`/`KoNC`/`DefDirectly`, though declared on the data class, are never written** — they're GUI-only helper fields used when deriving `NLPco` from an oedometer-test-style input rather than entering it directly; only the resulting `NLPco` is persisted.
+
+**`NONL->` for `Cam Clay` — fully field-mapped.** 3 lines:
+
+```
+Pco M Lambda kappa AnisoDefWay e OCR
+Pco.Lf
+Pco.Sdata
+```
+
+Standard (Modified) Cam-Clay parameters: `Pco` — preconsolidation pressure `p'c0`; `M` — critical-state stress ratio; `Lambda`/`kappa` — compression/swelling index; `AnisoDefWay` — anisotropy definition mode; `e` — initial void ratio; `OCR` — overconsolidation ratio.
+
+**`NONL->` for `Hujeux` — fully field-mapped.** One line, 25 fields (26 for files saved with ZSoil ≥7.32, which insert `KoSR`) — **no `Lf`/`Sdata` reference lines** (the code paths for them exist but are commented out, i.e. genuinely dead):
+
+```
+Pco phi psi am ac b cm d cc rkel rkhys rkmbl r4el OCR KoNC [KoSR] Beta mono_dev mono_vol cyc_dev cyc_vol viscoplastic relax_time AdvancedSetup AnisoDefWay k
+```
+
+`Pco` — preconsolidation pressure; `phi`/`psi` — friction/dilatancy angles; `OCR` — overconsolidation ratio; `KoNC`/`KoSR` — at-rest earth-pressure coefficients (normally-consolidated / stress-ratio-based); `Beta` — an angle parameter (default `30`); `mono_dev`/`mono_vol`/`cyc_dev`/`cyc_vol` — enable flags for the model's four plastic mechanisms (monotonic/cyclic × deviatoric/volumetric); `viscoplastic` — flag; `relax_time` — viscoplastic relaxation time; `AdvancedSetup`/`AnisoDefWay` — flags; `k` — a model parameter. **`am`, `ac`, `b`, `cm`, `d`, `cc`, `rkel`, `rkhys`, `rkmbl`, `r4el`** are internal multi-mechanism model coefficients in the standard notation of the Hujeux (1985) / Aubry et al. formulation — ZSoil's own source carries no descriptive tooltip text for these beyond the variable names, so they're listed here without an invented physical description; standard Hujeux-model literature is the place to look if precision matters.
 
 #### 4.3.2 `GEOM->` — geometry/cross-section
 
@@ -908,7 +947,7 @@ Example header line (one 2D subdomain): `1 128 SUBD_2D 4 4 0 4 1 4 0 1 0 0`. *(F
 | Marker | Header count label | Notes |
 |---|---|---|
 | `.glk` | number of Local bases | Custom local coordinate systems. How `.glk` bases are referenced from elements is unconfirmed. |
-| `.axs` | *(no direct header label)* | *(meaning unclear)* |
+| `.axs` | *(no direct header label)* | Named construction/snap-grid definitions (X/Y/Z gridline coordinates); blank in most files. |
 | `.apl` | number of auxiliary planes | **Not purely a GUI construction plane** — see below; a populated `.pbc` (§8.3) needs a matching `.apl` entry. |
 | `.igl` | number of auxiliary points | Auxiliary sketch points, distinct from `.pob`. |
 | `.isd` | number data super elements | Reusable geometry/mesh templates. |
@@ -933,6 +972,42 @@ plane — sanity-checks against the equation above). The `(nx,ny,nz,d)` here
 matches a `.pbc` block's own plane-definition line numerically (§8.3); no
 confirmed index field ties the two records together explicitly, but they
 are created together by the GUI whenever a periodic BC is defined.
+
+`.glk` populated example (rare — only one local basis seen across the available samples):
+```
+.glk
+1 1904 3971 3 0 1
+
+.ilb
+0
+```
+Format: `<idx> <?> <?> <?> <?> <?>` — one line, node/element numbers plausible for two of the fields, but the field-by-field meaning is not confirmed from this single example.
+
+`.axs` populated example — identical in every populated file seen, suggesting a GUI default rather than model-specific data:
+```
+.axs
+1
+Default
+X 5
+0.000000000000e+00
+1.000000000000e+00
+2.000000000000e+00
+3.000000000000e+00
+4.000000000000e+00
+Y 5
+0.000000000000e+00
+1.000000000000e+00
+2.000000000000e+00
+3.000000000000e+00
+4.000000000000e+00
+Z 5
+0.000000000000e+00
+1.000000000000e+00
+2.000000000000e+00
+3.000000000000e+00
+4.000000000000e+00
+```
+Format: `<count>`, then per entry: `<name>` followed by 3 sub-blocks, one per axis (`X`/`Y`/`Z`): `<label> <n>` then `<n>` coordinate values. Reads as a **construction/snap grid definition** (gridline coordinates along each axis, for the GUI's sketch/snap grid) rather than anything tied to specific model geometry — consistent with every sample seen carrying the same "Default" 5-line 0–4 grid regardless of the model's actual geometry. Not independently confirmed against a writer/reader in source.
 
 For the other markers in this section, if a hand-edit needs to touch them, populate them by building the corresponding geometry in the ZSoil GUI on a minimal test file and diffing the resulting `.inp`, rather than authoring them from this reference alone.
 
@@ -1078,11 +1153,15 @@ Here `type`=0 with label `thickness=1m` (a human-readable echo of the value on t
 
 ### 7.6 `.ipg` — Seepage elements
 
-Count-terminated: count = `"number of water Seepage's (*.ipg) (*.ipm)"`, typically `0`. Expected record layout, by analogy with the confirmed pattern for other element types (§7 intro):
+Count-terminated: count = `"number of water Seepage's (*.ipg) (*.ipm)"`, typically `0`. Populated example:
 ```
-<idx> <number> SPL2 <elem> <face> <node1> <node2> <mat1> <mat2> <mat3> <EF> <ULF> <iLayer>
+.ipg
+1 1 SPL2 3355 2 1480 3514 8 3 0 0
+No name
+2 2 SPL2 3354 2 3514 3515 8 3 0 0
+No name
 ```
-each followed by one skipped line — but no real example is available to confirm this.
+Format: `<idx> <number> SPL2 <elem> <face> <node1> <node2> <mat1> <mat2> <EF> <ULF>`, each record followed by a skipped name line — only 2 trailing material slots and no `iLayer`, unlike the volumic-element pattern in the §7 intro (seepage elements are 2-node line elements sitting on an element face, not a full continuum element).
 
 ### 7.7 `.ivg` — Convection elements
 
@@ -1188,7 +1267,13 @@ The two sides use opposite node order relative to the beam's node1→node2 direc
 
 ### 7.10 `.ikg` — Kinematic constraints, `.gnl` — Nodal links, `.ijg` — Joints
 
-All three are typically blank (`.ikg` header: `"# number of kinematic constrains (*.ikg)"`; `.gnl` header: `"# number of Nodal Links (*.gnl)"`; `.ijg` has no dedicated header label). No populated examples are available for any of the three.
+`.ikg` header: `"# number of kinematic constrains (*.ikg)"`; `.gnl` header: `"# number of Nodal Links (*.gnl)"`; `.ijg` has no dedicated header label. `.ikg` and `.gnl` are blank in every sample seen. `.ijg` populated example:
+```
+.ijg
+5 1 M_L2 1 6 1 4 0 0 0 0 0
+6 2 M_L2 6 4 1 4 0 0 0 0 0
+```
+Format: `<idx> <number> M_L2 ...` followed by 9 further integer fields — by analogy with other element records these are likely `<node1> <node2> <mat1> <mat2> <mat3> <EF> <ULF> <iLayer>` plus one extra field, but the exact split is not confirmed from this example alone.
 
 ### 7.11 `.pil` — Piles
 
@@ -1376,11 +1461,11 @@ In the `flag=4` record's X-DOF block, the `LF` field (`1`) references `LOAD_FUN 
 <idx> <nodeId> <3|8> <waterFlag> <waterVal> <waterEF> <waterLF> [<waterULF>] <heatFlag> <heatVal> <heatEF> <heatLF> [<heatULF>] <humidityFlag> <humidityVal> <humidityEF> <humidityLF> [<humidityULF>]
 ```
 
-`<idx>`/`<nodeId>` as usual, then the type code, then three groups — water, heat, humidity, in that order, each independently present or absent via its own `flag`. **Confirmed against a real file** (`boxw1.inp`, `createdWithVersion` `9.05`): each group is `[flag, value, EF, LF]` — **4 fields, no `ULF`** — 15 tokens total (`4 3 3 1 -2.000000000000e+001 0 0 0 0.000000000000e+000 0 0 0 0.000000000000e+000 0 0`: node 3, water BC value `-20`, EF/LF `0`). Current source writes a 5th `ULF` field per group (18 tokens total); this sample's older format predates it, matching the version-gating pattern seen throughout this format — when hand-editing, match the width already used elsewhere in the same file. `<flag>=8` (flux) reuses the identical shape as `<flag>=3` (BC) — only the leading type code differs.
+`<idx>`/`<nodeId>` as usual, then the type code, then three groups — water, heat, humidity, in that order, each independently present or absent via its own `flag`. In current source each group is `[flag, value, EF, LF, ULF]` — 5 fields, 18 tokens total; an older format (predating the `ULF` field) uses 4 fields per group, 15 tokens total — a version-gating difference (§3.1), so match the width already used elsewhere in the file being edited. `<flag>=8` (flux) reuses the identical shape as `<flag>=3` (BC) — only the leading type code differs.
 
-A node's *surface*-defined water/heat/humidity BCs (`.gwb`/`.gab`/`.gmb`, §8.4) get folded into this same `<flag>=3` mechanism once distributed onto individual nodes — confirmed directly in `boxw1.inp`: its `.gwb` block references nodes `3` and `6` with value `-20` each, and `.inb` records 4 and 8 are exactly `<flag>=3, node 3, val -20` / `<flag>=3, node 6, val -20`.
+A node's *surface*-defined water/heat/humidity BCs (`.gwb`/`.gab`/`.gmb`, §8.4) get folded into this same `<flag>=3` mechanism once distributed onto individual nodes.
 
-**`.iwb`/`.iab`/`.imb`/`.iwf`/`.ihf`/`.iuf` (§8.4) appear to be effectively unused in practice**, not genuinely duplicated data: in `boxw1.inp`/`boxw2.inp`/`boxw3.inp` (the only corpus files with any populated water BC), the header count for `.iwb` is `0` and the file itself is empty, even though `.gwb`+`.inb` carry the real, active water BC. The whole `zsoil_inp_files` corpus (~90 files) has no populated `.iwb`/`.iab`/`.imb`/`.iwf`/`.ihf`/`.iuf` anywhere, so this couldn't be fully ruled out either way — but the direct evidence points to `.inb`'s embedded mechanism being what the GUI's surface-BC tool actually populates, with the separate nodal-BC files an unused/legacy path in this corpus.
+**`.iwb`/`.iab`/`.imb`/`.iwf`/`.ihf`/`.iuf` (§8.4) appear to be effectively unused in practice**, not genuinely duplicated data: even where `.gwb`+`.inb` carry a real, active water BC, the corresponding `.iwb` header count is `0` and the block itself is empty. This points to `.inb`'s embedded mechanism being what the GUI's surface-BC tool actually populates, with the separate nodal-BC files an unused/legacy path (see verification notes for the evidence this is based on).
 
 ### 8.2 `.inc` — named constraint/support groups
 
@@ -1463,7 +1548,7 @@ The following markers cover boundary conditions for seepage/thermal/humidity ana
 | `.ihf` | number of heat flux | `.ghf` |
 | `.iuf` | number of humidity flux | `.guf` |
 
-No populated example is available for the `i`-marker (nodal-list) tier. The `g`-marker (gradient/pattern) tier **is** confirmed, from `boxw1.inp`/`boxw2.inp`/`boxw3.inp`'s `.gwb`:
+No populated example is available for the `i`-marker (nodal-list) tier. The `g`-marker (gradient/pattern) tier **is** confirmed, from a `.gwb` block:
 ```
 .gwb
 1 VARIABLE 2 0 0 1
@@ -1753,7 +1838,7 @@ Typically used for reinforced-concrete beam/shell rebar layouts:
 ...                                                <- repeated per member
 ```
 
-Per layer: `status_flag` (the real enabled/active flag — **not** the field near the end of the line, despite that being the more intuitive guess), `Orientation` (radial/circumferential, axisymmetric only), `length_type` (how the layer's extent along the beam is defined), `dist_l`/`dist_r` (left/right distances), `ypos_type`/`ydist` (position across the section), `zoffset_l`/`zoffset_r`, `alphaStart`/`alphaEnd` (circular-section angles, same as the layered-beam `GEOM->` fiber record, §4.3.2), `diam` (bar diameter), `nBars` (bar count), `total_area`, `prestress`, `ReinforcementType` (`0`=total area, `1`=density — not an enabled flag), and `material` (material id for the rebar itself, separate from the host beam's material). A reinforcement member links a named reinforcement set to a specific list of beam elements — i.e. the same rebar layout can be reused across many beams by reference name.
+Per layer: `status_flag` (the real enabled/active flag — **not** the field near the end of the line, despite that being the more intuitive guess), `Orientation` (radial/circumferential, axisymmetric only), `length_type` (how the layer's extent along the beam is defined), `dist_l`/`dist_r` (left/right distances), `ypos_type`/`ydist` (position across the section), `zoffset_l`/`zoffset_r`, `alphaStart`/`alphaEnd` (circular-section angles, same as the layered-beam `GEOM->` fiber record, §4.3.2), `diam` (bar diameter), `nBars` (bar count), `total_area`, `prestress`, `ReinforcementType` (`0`=total area, `1`=density — not an enabled flag), and `material` (material id for the rebar itself, separate from the host beam's material). A reinforcement member links a named reinforcement set to a specific list of beam elements — i.e. the same rebar layout can be reused across many beams by reference name. `.brc` is blank (`0 0`) in every example available — no populated real-world example is available; the layout above comes from the source's `.inp` writer, not from a sample file.
 
 ---
 
@@ -1814,7 +1899,7 @@ All three typically empty; record shape is expected to mirror the corresponding 
 
 **`.cld` — Node-to-face contact/mesh-tying (`ContactLD`).** A different mesh-tying mechanism from `.fac`/`.mrt` (§13.1): a `ContactLD` record ties a named group of "contactor" nodes (`ContactorNodes`, the tied/slave side) to a named group of "master" faces (`MasterFaces`), again via the same `ContactParamList` (type/mat/EF/ULF) pattern. The file bundles three sub-writers back to back — the contactor-node-group catalog (`SetOfContactors`), the master-face-group catalog (`SetOfMasters`), and the `ContactLD` tie records themselves (`SetOfContactLD`) — but the exact per-record field layout wasn't traced beyond this. No populated example is available.
 
-**`.gos` — Geometrical surfaces.** **Corrects an earlier version of this doc**, which called this "write-only" — it's read as well as written, just typically empty in the sample corpus available. Populated syntax still not documented here.
+**`.gos` — Geometrical surfaces.** It's read as well as written (not write-only), just typically empty. Populated syntax still not documented here.
 
 **`.igl`** — see §6.5 (auxiliary points).
 

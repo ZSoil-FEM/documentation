@@ -152,6 +152,37 @@ hoek-brown need the same treatment") of the Menetrey thread left open in the Mul
   the existing `Fiber Shell`/`Orthotropic shell` §4.4 mechanism wasn't chased further — worth a
   follow-up if that specific formulation matters.
 
+## §4.3.7 Duncan-Chang / Cap Model / Cam-Clay / Hujeux — fully field-mapped
+
+Closes out the remaining `NONL->` gap list, per explicit user request. All four classes are
+declared in `dataNonLinear.h`, writers in `dataNonLinear.cpp`:
+
+- **Duncan-Chang**: `DataNonLinearDuncanChang` (`dataNonLinear.h`, near line 500),
+  `operator<<` at `dataNonLinear.cpp:2031`. No `SetDouble(..., "description")` tooltip strings
+  found in `Default()` (`dataNonLinear.cpp:1979`) for `G`/`F`/`d` specifically — their physical
+  meaning (`ν = G − F·log₁₀(σ₃/Pa)`) is standard Kulhawy-Duncan literature knowledge applied to
+  the field names, not confirmed via an in-source description the way most other fields in this
+  investigation have been. Flagged accordingly in the doc rather than stated as source-certain.
+- **Cap Model**: `DataNonLinearCapModel` (`dataNonLinear.h:584`), `operator<<` at
+  `dataNonLinear.cpp:3089`. `Default()` (`dataNonLinear.cpp:~2880`) has rich `SetDouble`/
+  `SetComboBox` tooltip strings for every field that *is* written. Confirmed `SigVM`/`KoNC`/
+  `DefDirectly` (all declared on the class) are absent from `operator<<` entirely — cross-checked
+  by re-reading the full write statement, not just skimming — so they're GUI-only, feeding into
+  `NLPco`'s value via some derivation not itself persisted.
+- **Cam-Clay**: `DataNonLinearCamClay` (`dataNonLinear.h:640`), `operator<<` at
+  `dataNonLinear.cpp:3500`. Simplest of the four — no version gates on the writer side.
+- **Hujeux**: `DataNonLinearHujeux` (`dataNonLinear.h:698`), `operator<<` at
+  `dataNonLinear.cpp:3798`. Confirmed the `Lf`/`Sdata` lines are dead code — the exact same
+  fields are still declared as a `friend operator<<` and referenced in a `//`-commented-out block
+  right above the real write statements (`dataNonLinear.cpp:3801-3802`), and the real function
+  body never reaches them. The 10 internal mechanism coefficients (`am/ac/b/cm/d/cc/rkel/rkhys/
+  rkmbl/r4el`) have real default values in `Default()` but no descriptive strings — same honesty
+  flag as Duncan-Chang's `G/F/d`, but here there wasn't even a standard-literature mapping
+  attempted since Hujeux's own notation already matches the source field names directly.
+- Not resolved for any of the four: whether `Pa` in NONL-> and any independently-set `Pa`
+  elsewhere in the material record are actually the same underlying reference pressure or happen
+  to share a name — not chased, low priority.
+
 ## Corpus spot-check (`zsoil_inp_files`) — resolved the `.inb`/`.iwb` open question, plus sanity checks
 
 User asked to check the real sample corpus at
@@ -415,7 +446,9 @@ Confirmed by checking that the referenced `.i0g` element(s)' node coordinates ac
 
 ## §8.1 continuum-node `.inb` flag values (1/4/6) and multi-record priority
 
-Same source/session as the `.pbc`/`.apl` entries above, from building and debugging `Model_N5.inp`'s base boundary condition (originally acceleration-driven, then changed to velocity-driven by the user mid-session — both went through this same mechanism, just with `flag=6` vs `flag=4`). Established across this and an earlier (compacted) part of the same overall effort: for continuum/solid nodes `<flag>` selects BC type (`1`=displacement, `4`=velocity, `6`=acceleration), a node can carry multiple `.inb` records (one per type), and when two records prescribe the same DOF the more dynamic type wins (acceleration > velocity > displacement) even though the lower-priority record's `fixedFlag` still reads `1`. Not derived from the corpus or GUI — confirmed empirically by observing the intended behavior (a base node with a `flag=1` record fixing it at 0 plus a `flag=4`/`flag=6` record referencing a `LOAD_FUN` on the same DOF) actually driving the node as intended rather than staying fixed. This is a different meaning of `<flag>` than the 3D-beam translation/rotation split documented just above it in §8.1 — don't conflate the two.
+Same source/session as the `.pbc`/`.apl` entries above, from building and debugging a private project file's base boundary condition (originally acceleration-driven, then changed to velocity-driven mid-session — both went through this same mechanism, just with `flag=6` vs `flag=4`). Established across this and an earlier (compacted) part of the same overall effort: for continuum/solid nodes `<flag>` selects BC type (`1`=displacement, `4`=velocity, `6`=acceleration), a node can carry multiple `.inb` records (one per type), and when two records prescribe the same DOF the more dynamic type wins (acceleration > velocity > displacement) even though the lower-priority record's `fixedFlag` still reads `1`. Not derived from the corpus or GUI — confirmed empirically by observing the intended behavior (a base node with a `flag=1` record fixing it at 0 plus a `flag=4`/`flag=6` record referencing a `LOAD_FUN` on the same DOF) actually driving the node as intended rather than staying fixed. This is a different meaning of `<flag>` than the 3D-beam translation/rotation split documented just above it in §8.1 — don't conflate the two.
+
+**Now independently corroborated by the shared corpus**: `col1D_el_fixedBase.inp` (a fixed-base 1D column dynamic test, `LOAD_FUN 1` = "horizontal base velocity") carries the *exact same* two-record pattern on its own base node — `1 1 1 1 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0` (`flag=1`, `Uy` fixed at 0) immediately followed by `2 1 4 1 1 0 1 0 0 0 0 0 0 0 0 0 0 0 0` (`flag=4`, `Ux` driven by `LOAD_FUN 1` ×1.0) — byte-for-byte the same shape as the doc's own worked example in §8.1 (which was written from the private file before this corpus file existed). The doc's example is left as-is since it already matches; noting this here so the claim is no longer resting solely on an unavailable file.
 
 ## §4.2/§4.3.1/§4.3.7/§4.3.10 `HS-small strain stiffness` continuum material
 
@@ -437,6 +470,132 @@ formulation.
 ## Corpus coverage caveats (applies throughout §7–§13)
 
 Most "typically empty" / "no populated example available" statements in the doc reflect the ~71-file `zsoil_inp_files` corpus plus spot checks in the larger `v26\manual` and `ZSoilPy3\tests` trees — not an exhaustive search. Absence of an example there is evidence of rarity, not proof the marker is unused in general. Markers flagged this way (`.iff`, `.ipg`, `.ivg`, `.ikg`, `.gnl`, `.gbh`, `.brc`, most of §11.3, most of §13.3, etc.) are good candidates for follow-up if a real project ever populates them — regenerate a minimal GUI example and diff. (`.pbc` was on this list too; no longer — see the dedicated §8.3/§6.5 entry above.)
+
+## §6.5/§7.6/§7.10/§12.1 — corpus sweep for populated examples ("add minimal examples" pass)
+
+Ran a full-corpus awk scan (98 `.inp` files across `zsoil_inp_files/` + `ZSoilPy3/tests/*`) checking every marker the doc flagged as lacking a populated example, for non-blank/non-`0` content immediately following the marker line. Findings:
+
+- **`.ipg` (§7.6)**: genuinely populated in `ZSoilPy3\tests\diaphragm-wall\HS-Brick-Exc-Berlin-Sand-2phase.inp` (2-phase-flow excavation model). Real records only carry 4 trailing integer fields (`mat1 mat2 EF ULF`), not the 6-field `mat1/mat2/mat3/EF/ULF/iLayer` pattern the doc had extrapolated by analogy from §7's intro — that guess is now replaced with the confirmed shorter shape. Each record is followed by a skipped name line (`"No name"` in this file), same convention as `.icg`'s per-set name line (§7.8).
+- **`.ijg` (§7.10)**: genuinely populated in `ZSoilPy3\tests\2D-case-1.inp` (2 joint elements, tag `M_L2`). Added the raw record as an example; did not assert a specific split of the 9 trailing integer fields — no independent source/GUI cross-check was done for `.ijg` this round, so the field breakdown stays a stated analogy, not a confirmed mapping.
+- **`.glk` (§6.5)**: genuinely populated in only one file across both corpora (`ZSoilPy3\tests\diaphragm-wall\HS-Brick-Exc-Berlin-Sand-2phase.inp`), a single local-basis record `1 1904 3971 3 0 1`. No writer/reader for `.glk` was found via literal-string grep in `Z_Prep3D` (consistent with this session's earlier finding that many extensions are assembled via the `PrePro_Ext[]`/external-config fragment mechanism rather than hardcoded per-tag code) — field meaning stays unconfirmed, only the raw shape was added.
+- **`.axs` (§6.5)**: populated in many `zsoil_inp_files` files (e.g. `2D_anchor_disp_s1m.inp`, `2D_anchor_disp_s1m_nl.inp`), blank (`0`) in others (e.g. `boxd2.inp`). Example: `1` / `Default` / `X 5` / `0.0`. No writer found via grep either; doc now shows the observed 4-line-per-entry shape (`name` / `label n` / `value`) but keeps "meaning unclear" rather than guessing what an axis entry is for or what references it.
+- **`.brc` (§12.1)**: the earlier awk scan flagged `.brc` as "populated in nearly every file" — this was a **false positive**: the line right after `.brc` is always the header pair `0 0` (zero sets, zero members), which is non-blank/non-`"0"` as a literal string match but is in fact the empty-count line. Rechecked explicitly across the full corpus (`grep` + per-file first-line dump): `.brc` is `0 0` everywhere, no exceptions. Doc's existing field-by-field layout (built from the source `.inp` writer, not a sample) is left as-is, with a note added that no populated real-world example exists in this corpus.
+- **`.ilt` type=`1` variant (§7.5)**: checked all 12 corpus files with non-default `.ilt` content (shell-bending/traction, winkler, plate tests, bridge-loads). All show `type=0` (the already-documented variant); none show `type=1`. No doc change — the type=1 variant remains an unconfirmed gap, now double-checked against the corpus rather than left purely theoretical.
+- Markers reconfirmed as genuinely blank everywhere in both corpora (no doc change, existing "no populated example" language stands, now double-checked): `.ish`, `.ivg`, `.scs`, `.ims`, `.ikg`, `.gnl`, `.hex`, `.hef`, `.grp`, `.iem`, `.pme`, `.iag`, `.iav`, `.img`, `.imv`, `.ieg`, `.ist`, `.eie`, `.spg`, `.svg`, `.scg`, `.crc`, `.cld`, `.gos`, `.idv`, `.fac`, `.mrt`, `.drz`, `.dre`, `.pth`, `.bcl`, `.isd`.
+- `.izg`/`.iig` also showed up as "populated" in the scan but the doc already carries real examples for both (§11.1/§11.2) — no action needed.
+
+## Known gaps in `inp-file-format.md` — consolidated list (as of 2026-08-27)
+
+The main doc flags each of these inline with a short marker (`(unclear)`, `unconfirmed`, "no populated example", etc.), per its own convention — this section is just a single-place index of all of them, grouped by doc section, so a future session doesn't have to grep the whole file to find what's still open. Regenerate by grepping `inp-file-format.md` for `unclear|not confirmed|unconfirmed|no populated example|not documented|not resolved|unresolved|not identified|not decoded|not established` if this list goes stale.
+
+**§3 Header/Control**
+- ~~`DYN_CONTROL` line 2 fields 1–4 and line 3~~ — **resolved**, see dedicated entry below.
+- Header count-block row 146 (`4 0` flag pair immediately before `CONTROL`) — meaning unclear.
+
+**§4 Materials**
+- Plain `Shell` formulation's own `ELAS->`/`GEOM->` content — not documented at all.
+- Duncan-Chang `G`/`F`/`d` (variable-ν triple) — formula is standard literature knowledge, not independently confirmed field-by-field via source/GUI (no GUI tooltip text found for these three).
+- Continuum `GEOM-> <value>` — single value, meaning unclear.
+- Shell `FLOW->` — field *set* and meaning known, but exact token positions not independently verified.
+- Beam `INIS->` — same 12-field shape as continuum assumed, but whether the first 3 (Ko-related) fields are even applicable to a beam is unconfirmed, and the remaining fields' meaning is unclear.
+- `DAMP->` — only fields 1–2 (α₀/β₀, Rayleigh damping) are known; remaining 5 fields unclear.
+
+**§6 Geometry**
+- `.ing` trailing `<flag>` — always observed as `0`; meaning unclear.
+- `.glk` — how bases are referenced from elements is unconfirmed; the one populated example's field-by-field meaning isn't confirmed either (no writer/reader located via source grep).
+- ~~`.axs`~~ — **resolved as a construction/snap-grid definition**, see dedicated entry below (structural interpretation only, no writer/reader source-confirmed).
+- `.apl` `<type>` field — always `3` in every example; meaning unclear.
+
+**§7 Elements**
+- `.ish` (shell hinges) — populated record layout not documented (typically blank).
+- `.icg` `genFullContinuity` flag — setter semantics not confirmed (declared/written, no setter/enum found in this checkout).
+- `.ics` lines 5–6 — unclear.
+- `.scs`/`.ims` — no populated example for either.
+- `.ijg` — 9 trailing integer fields' exact split not confirmed (analogy to other element records only).
+- `.gbh` per-borehole record layout — inferred structurally, not confirmed against real populated data.
+- `.bcl` — likely a duct/tendon-loss-coefficient catalog analogous to `.bcb`, but unconfirmed.
+
+**§8 Boundary Conditions**
+- `.ilb` field layout — not independently verified against a populated example.
+- `.pbc` — two trailing fields on one line, and a separate 11-numeric-flag line, purpose unclear on both; no confirmed cross-reference field ties a `.pbc` record to its `.apl` plane by index (they just share numeric plane-equation values).
+- `.gwb` header's trailing field — doesn't match source's expected `unloading_function`/`siz` pair; not fully resolved which it is.
+
+**§9 Loads**
+- `GRAD_LOAD` — record fields beyond reference-node/direction/data unconfirmed (no populated example).
+- `.ple` `<LF2>` — exact meaning unconfirmed.
+- `.pth` (movement paths) — record syntax unconfirmed (always empty in samples seen).
+
+**§10 Masses**
+- `.iem` line 2 — purpose unclear.
+- `.pme` — record shape unconfirmed; assumed to mirror `.ple`'s `LINE_LOAD`/`SURFACE_LOAD` shape but for mass, not verified.
+
+**§11 Initial Conditions**
+- §11.3 (heat/humidity/strain initial conditions) — shape is an extrapolation from the `.izg`/`.iig` pattern, not confirmed.
+- `.idv` — field layout confirmed (displacement+velocity, no acceleration, per GUI dialog binding), but no populated example exists to confirm real field values in practice.
+
+**§13 Mesh Tying & Domain Reduction**
+- `.mrt` — purpose unconfirmed beyond "sits next to `.fac`, likely a related mesh-tying setting".
+- `.fac`/`.mrt`/`.drz`/`.dre`-family markers — record shape expected to mirror `.sdm`'s face/edge referencing, but no populated example confirms the exact fields.
+
+**§14 Other Data**
+- `.gos` — populated syntax not documented (confirmed read+write this session, but no populated example).
+
+**Explicitly out of scope, not chased this session** (per the original plan, still true):
+- `T3D_PARAM_*` literal enum values (ordering confirmed via `constant.h`, exact values not — not needed since ordering is what determines field position).
+- `.pil`'s `code` field.
+- `ContactRC`/`ContactLD`'s own `writeOn` bodies — `.crc`/`.cld`'s exact per-record field layout wasn't traced beyond the manager/mechanism level.
+- `.ivd`/`.svd`'s own field-level record layout (the `ViscDamp` object's write function itself) — only the mechanism/manager level was traced.
+
+## §3.4 `DYN_CONTROL` fully field-mapped; `PSH_CONTROL` cross-checked
+
+Source: a new corpus file, a 1D column dynamic/seismic test (`col1D_el_fixedBase.inp` — fixed-base
+elastic column, `LOAD_FUN 1` = "horizontal base velocity", `DirichletBC`-driven). Full field mapping
+found directly in `DynCtrl.cpp:116-135` (`operator<<`) and `DynCtrl.h` (member declarations),
+cross-referenced against `DynCtrl_Dlg.cpp`'s `DDX_*` bindings (`TypeMass`→`R_MASS_LUMPED`/
+`R_MASS_CONSIS` radio, `RotInertia`→`B_MASS_ROT` check, `MassFilter`→`B_MASS_FILT` check + gates
+the `Dir[]` checkboxes' enabled state, `AlgorType`→the 5 `R_ALGOR_*` radios matching `eAlgorTpe`
+exactly in declaration order, `alphaDamp`/`betaDamp`→`E_DAMP_A`/`E_DAMP_B` with a `B_DAMP_EVAL`
+button, `alphaAlgorFluid`/`thetaAlgor`→`E_ALGOR_ALPHA_F`/`E_ALGOR_THETA`, shown/hidden together with
+the main `alpha`/`beta`/`gamma` fields depending on `AlgorType` — confirming these are genuinely
+separate fields, not a redundant copy as the doc previously guessed). `DefWay`/`w_f_T_1`/`w_f_T_2`/
+`xsi1`/`xsi2` traced through `DynCtrl_Dlg::OnDampEvaluate()` (`DynCtrl_Dlg.cpp:269-305`) into a
+`NewmarkPar_Dlg` sub-dialog — this is the standard two-target-frequency (`w1`/`w2`) two-damping-ratio
+(`xsi1`/`xsi2`) Rayleigh-damping evaluator, an alternative way to arrive at `alphaDamp`/`betaDamp`
+rather than entering them directly (`DefWay` selects which). `eAlgorTpe` enum from `DynCtrl.h:13-20`.
+In the sample file: line 2 = `0 0 0 0 3 -0.3 0.4225 0.8` (`TypeMass`=0/lumped, `RotInertia`=0,
+`alphaDamp`=`betaDamp`=0, `AlgorType`=3/HHT-α-displacement, `alpha`=-0.3); line 3 = `0 9.80655 1 1 1`
+(`MassFilter`=0, `Acc`=9.80655, `Dir`=[1,1,1] — note `MassFilter`=0 here despite `Dir` being
+non-default, so the direction fields aren't gated by `MassFilter`'s value in the file itself, only
+in the dialog's enabled/disabled rendering); line 4 = `0` (`localBaseFlg`=0, no extra line); line 5 =
+`-0.3 0.5 1` (`alphaAlgorFluid`=-0.3 — same as `alpha`, consistent with "coincidentally equal in a
+simple/uncoupled example" rather than a hard redundancy; `thetaAlgor`=0.5; `includeDarcyLaw`=1);
+line 6 = `0 0 0 0 0` (`DefWay`=0, direct-entry mode, so `w_f_T_1`/`w_f_T_2`/`xsi1`/`xsi2` stay at 0).
+§3.4 rewritten with the full field table.
+
+Same file's `PSH_CONTROL 1` / `Default` / `0 0 0 0 9.80655 1 1 1` matches the doc's already-fully-
+mapped `<TypeMass> <RotInertia> <MassFilter> <ForcePattern> <Acc> <DirPsh_x> <DirPsh_y> <DirPsh_z>`
+field-for-field with no discrepancy — first real populated cross-check for that struct, no doc
+change needed.
+
+## §6.5 `.axs` — read as a construction/snap-grid definition; §8.3 `.pbc` cross-check
+
+Source: the new `col1D_el_fixedBase.inp` corpus file, plus a re-check of an earlier sample
+(`2D_anchor_disp_s1m.inp`) that turns out to carry the exact same block. Both show the *full*
+`.axs` entry (earlier scans only captured the first few lines): `<count>` / `<name>` / then 3
+sub-blocks, one per axis (`X`/`Y`/`Z`): `<label> <n>` followed by `<n>` coordinate values. Both
+files show byte-identical content (`Default`, 5 gridlines at `0,1,2,3,4` on all 3 axes) despite
+having unrelated model geometry — this rules out the entry being derived from the model itself and
+points to a GUI-level default (a construction/snap-grid preset) instead. No writer/reader was
+located via literal-string grep in `Z_Prep3D` (same non-finding as `.glk` — consistent with the
+extension-fragment-file mechanism documented in §2.2), so this is a structural read, not a
+source-confirmed one; §6.5 updated with the fuller example and this interpretation, hedged
+accordingly.
+
+Same file's `.pbc` block (`1 14 82 0 0`, 41 tied node pairs, same `type=14`/`Ux+Uy+Uz` and the same
+plane values `1,0,0,-0.5` as the doc's existing example) is a second, larger-scale confirmation of
+the existing `.pbc` field mapping — `<nNodes>` = `2×pairCount` holds again (`82` = `2×41`). No new
+fields resolved (the two trailing header fields and the 11-flag line are still `0`/all-zero here
+too); no doc change needed beyond noting the corroboration.
 
 ## Corrected mistake (kept here as a flag, not in the main doc)
 
