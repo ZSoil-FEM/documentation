@@ -244,6 +244,8 @@ FLOW: -
 
 Each `HEAT:`/`HUMIDITY:`/`FREE_FILED_MOTION:`/`FLOW:` line names an associated companion project file, or `-` if none is linked. `UnitSystemName` is a free-text label (e.g. `STANDARD`, `EXAMPLE UNITS`). The two unit lines are **not a duplicate**: the first is the unit system used **in the preprocessor** (model input/editing), the second is the unit system used **in the postprocessor** (results display) — usually identical, but can differ if display units were changed after the model was built. Observed unit values include `kN`, `m`, `deg`/`rad`, `year`/`day`/`h`, `C`.
 
+**`FREE_FILED_MOTION:` (that spelling — not a transcription typo, it's how ZSoil itself writes it) is a *solve-order* dependency, not just a file reference.** Confirmed empirically (not decoded from source): the named companion project's own **solved results** are read in when the depending project is *solved*, not when it's compiled — so the associated project must be fully solved first, or the depending solve finds missing/stale data. This is the mechanism behind the Domain Reduction Method; see §13.2 for the confirmed physical behavior and a worked example.
+
 ### 3.4 Analysis control blocks
 
 After the units block, a fixed sequence of named control blocks follows. The general pattern for the solver-control blocks (`CONTROL`, `DYN_CONTROL`, `PSH_CONTROL`) is:
@@ -385,7 +387,7 @@ The following keywords, one per line with value(s) immediately after:
 | `PARALLEL_SETTINGS` | Parallel-solver settings (thread count, etc.) |
 | `ARC_LENGTH` | Arc-length method settings/flags |
 | `AUGMENTED_LAGRANGIAN` | Augmented Lagrangian contact-solver settings |
-| `SEISMIC_DATA <n>` | Seismic-analysis data block |
+| `SEISMIC_DATA <n>` | Seismic-analysis data block — drives a compliant/absorbing (`.ivd` `VS_L2`) boundary; see §13.4 for a populated example and the confirmed (behaviorally, not field-by-field) mechanism |
 | `PARAMETRIC_ANALYSIS <n>` | Parametric-analysis settings |
 | `CONTACT_PARAMETERS <n>` | Contact-material default parameter set(s), same named-set pattern as §3.4 |
 
@@ -458,6 +460,7 @@ ZSoil organizes every material by **Continuum/Structure type** (which element gr
 | Shells | `Shell Layered` | `ELAS->` (own, likely vestigial) `GEOM->` (core+fiber layer table) `DENS->` `FLOW->` (shell variant, §4.3.5) `CREEP->` `NONL->` (own, likely unused) `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | `GEOM->` references a **second `NUM_MATERIALS=` pass** (§4.4) for its fiber/core materials, rather than embedding them the way a layered beam does. |
 | *(fiber/core layer material, 2nd `NUM_MATERIALS=` pass — §4.4)* | `Fiber Shell` | `Elastic`(`ELAS-><E>` only) `Geometry`(`GEOM->`, type+direction) `Non linear`(`NONL->`, `ft`/`fc`) `MAIN->` `DENS->` `FLOW->` `CREEP->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | This is where a layered shell's real tension/compression capacity and stiffness actually live (§4.3.1, §4.3.7). |
 | *(fiber/core layer material, 2nd pass)* | `Orthotropic shell` (lower-case `"shell"`) | `Elastic`(`ELAS->`, E1/E2/ν12/G0) `Unit weights`(`DENS->`) `Geometry`(`GEOM->`, direction vector only) `Flow`(`FLOW->`) `MAIN->` `CREEP->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | **No `Non linear` option at all** — always linear-elastic, e.g. for a directional mesh/stiffener layer rather than a rebar fiber. |
+| Boundary dashpot (`VS_L2`, §13.4) | `Viscous Damper` | `ELAS->` `GEOM->` `MAIN->` `DENS->` `FLOW->` `CREEP->` `NONL->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | Same generic tag set as a plain `Elastic Beam`, but repurposed: `ELAS->`'s first field is the dashpot's own coefficient, not a true elastic modulus (confirmed *behaviorally* — see §13.4 — not by decoding the field itself; `DENS->`'s first field was `0` in the one example seen, consistent with a boundary element having no mass of its own). Used for a compliant/absorbing dynamic boundary. |
 
 ### 4.3 Tags
 
@@ -1872,6 +1875,13 @@ A simple element-id list for each of the DRM domain's interior and exterior elem
 <eleId1> <eleId2> ...        <- nElements ids (exterior elements)
 ```
 
+**Confirmed behaviorally, from a benchmark comparing a DRM model against an equivalent plain fixed-base model driven directly with the same signal** (not decoded from source):
+
+- The model's true exterior boundary (the `.dre` elements/nodes) is simply **fixed** — the earthquake motion never appears there as a prescribed displacement/velocity/acceleration. Measured velocity at an exterior-boundary node stayed at floating-point noise (~1e-9, on a ~2e-2 signal) for the entire time history.
+- The earthquake instead enters as **equivalent nodal forces at the DRM layer**, computed from the associated free-field project's own solved results (§3.3's `FREE_FILED_MOTION:`) — this is why that association is a solve-order, not compile-time, dependency.
+- With the free-field project correctly solved first, the DRM model's interior response reproduces the plain fixed-base reference model's response to **floating-point precision** (max residual ~1e-9 m/s on a ~2e-2 m/s signal, relative L2 error ~3e-7) — exactly as expected, since DRM is designed to reproduce the non-DRM reference solution, not approximate it.
+- Minimal worked example, from a 40-element 1D column model: `.drz` = `1\n2` (one interior element, id 2) and `.dre` = `1\n1` (one exterior element, id 1) — just the single element pair at the model's real boundary (node 1, y=0) carries the DRM tagging; the rest of the column is ordinary interior mesh.
+
 ### 13.3 Elements excluded from automatic contact generation (`.eie`)
 
 Not related to mesh tying itself — it's the list of elements flagged (via the GUI's "Exclude from contact" toggle) to be **skipped when ZSoil auto-generates interface/contact elements** (`.icg`/`.ics`, §7.8/§7.9) that would otherwise be placed on them automatically. Format:
@@ -1886,7 +1896,30 @@ Not related to mesh tying itself — it's the list of elements flagged (via the 
 
 ### 13.4 Other structural-mesh markers
 
-**`.ivd`, `.svd` — Viscous dampers.** Not initial conditions (see the correction note in §11.4) — these are dashpot/damper elements attached to element faces (same family as `.gsl`/`.ple`'s face-attached mechanisms), used for absorbing/"quiet" boundaries in dynamic analyses. `.ivd` covers already-meshed element faces (`SetOfFaces`/`SetOfEdges`), `.svd` the subdomain/macro-face equivalent before meshing (`SetOfSubDomainFaces`/`SetOfSubDomainEdges`) — the same i-prefix/s-prefix pairing as `.spg`/`.svg`/`.scg` below. No populated example available; typically empty.
+**`.ivd`, `.svd` — Viscous dampers.** Not initial conditions (see the correction note in §11.4) — these are dashpot/damper elements attached to element faces (same family as `.gsl`/`.ple`'s face-attached mechanisms), used for absorbing/"quiet" boundaries in dynamic analyses. `.ivd` covers already-meshed element faces (`SetOfFaces`/`SetOfEdges`), `.svd` the subdomain/macro-face equivalent before meshing (`SetOfSubDomainFaces`/`SetOfSubDomainEdges`) — the same i-prefix/s-prefix pairing as `.spg`/`.svg`/`.scg` below.
+
+A populated `.ivd` example, from a 1D column model's compliant (absorbing) base — one `VS_L2` (viscous, 2-node) damper element:
+```
+.ivd
+1 1 VS_L2 1 1 2 1 2 0 0 0
+No name
+```
+Exact per-field meaning beyond the type tag is *(unclear)* — `mat=2` (referencing a `Viscous Damper` material, §4.2) is a plausible read of one of the trailing integers by position/analogy with other element records, but not independently confirmed field-by-field.
+
+The companion `SEISMIC_DATA <n>` block (§3.4) from the same model:
+```
+SEISMIC_DATA 1
+No name
+1 0 1 0 0 1 1
+1
+```
+Field meaning is likewise *(unclear)* beyond the outer shape (name, a flags line, then what is plausibly a `LOAD_FUN` reference — `1`, matching the model's only `LOAD_FUN` — on its own trailing line, not independently confirmed). **What *is* confirmed, empirically, by comparing base- and top-node time histories in a solved run**: this mechanism, combined with the `.ivd` dashpot above, implements a Joyner-Chen-style "elastic bedrock"/compliant boundary:
+
+- The `LOAD_FUN` driving it must be an **acceleration** time history, not velocity or displacement — using the same physical signal that would be a valid velocity input for a plain prescribed-motion (Dirichlet) base (§8.1) produces the wrong result; it must be differentiated first.
+- The boundary node's own resulting motion comes out at **exactly half** the amplitude of the driving signal — the standard "outcrop-to-within" halving for an impedance-matched viscous boundary (e.g. peak base acceleration = 0.5 × the `LOAD_FUN`'s peak value).
+- Waves reflected back down from a free surface above and arriving back at this boundary are **absorbed, not re-reflected** — a d'Alembert decomposition of the column's velocity field shows exactly one round-trip echo at the base (arriving one period 2H/c after the direct arrival, H=column height, c=shear-wave speed) and nothing further, unlike a prescribed-motion base's infinite reflection series.
+
+No populated example is available for `.svd`; typically empty.
 
 **`.spg`, `.svg`, `.scg` — subdomain-level counterparts of already-documented element markers.** Confirmed via source: each is written by the *same* method as its plain counterpart, just called on `SetOfSubDomainFaces`/`SetOfSubDomainEdges` instead of `SetOfFaces`/`SetOfEdges` — i.e. these hold the macro/subdomain-level definition (before mesh generation) of the same mechanism, not separate features:
 - `.spg` ↔ `.ipg` (Seepage elements, §7.6) — `writeSeePagesOn`.

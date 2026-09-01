@@ -535,7 +535,7 @@ The main doc flags each of these inline with a short marker (`(unclear)`, `uncon
 
 **§13 Mesh Tying & Domain Reduction**
 - `.mrt` — purpose unconfirmed beyond "sits next to `.fac`, likely a related mesh-tying setting".
-- `.fac`/`.mrt`/`.drz`/`.dre`-family markers — record shape expected to mirror `.sdm`'s face/edge referencing, but no populated example confirms the exact fields.
+- `.fac`/`.mrt`-family markers — record shape expected to mirror `.sdm`'s face/edge referencing, but no populated example confirms the exact fields. (`.drz`/`.dre` no longer belong on this line — a populated example was found later, see the dedicated `ASSOCIATED_PROJECTS:`/DRM section below; they're a plain flat element-id list, not a face/edge shape, and the actual DRM force-injection mechanism is still unconfirmed.)
 
 **§14 Other Data**
 - `.gos` — populated syntax not documented (confirmed read+write this session, but no populated example).
@@ -596,6 +596,50 @@ plane values `1,0,0,-0.5` as the doc's existing example) is a second, larger-sca
 the existing `.pbc` field mapping — `<nNodes>` = `2×pairCount` holds again (`82` = `2×41`). No new
 fields resolved (the two trailing header fields and the 11-flag line are still `0`/all-zero here
 too); no doc change needed beyond noting the corroboration.
+
+## §3.3/§13.2 `ASSOCIATED_PROJECTS:`/`FREE_FILED_MOTION:` and the Domain Reduction Method — confirmed empirically via a benchmark test
+
+Different methodology from most of this file: no source code was read for this one (neither
+`FREE_FILED_MOTION:`'s solve-order semantics nor DRM's own force-injection mechanism have a located
+writer/reader in this pass) — instead confirmed the same way `Benchmarking\Unittests`' own
+`Benchmark` framework verifies everything else, by comparing real solved-run time histories against
+a known-good reference. Source models: `col1D_el_DRM.inp` (the DRM project) and
+`col1D_el_fixedBase_ff.inp` (its associated free-field project), both in
+`Benchmarking\Unittests\zsoil_inp_files\` — a Domain-Reduction-Method variant of the already-
+documented `col1D_el_fixedBase.inp` 1D SH-wave column (identical mesh/material/node numbering,
+confirmed node-for-node against the `.ing` coordinates), built so its DRM response *should* exactly
+reproduce that plain fixed-base model's own response.
+
+- **The solve-order dependency was inferred from `.dat` inspection** (`col1D_el_DRM.inp`'s own
+  `ASSOCIATED_PROJECTS:` block names `col1D_el_fixedBase_ff` under `FREE_FILED_MOTION:`), then
+  **confirmed operationally**: queuing both projects into the same parallel solve batch (as the
+  Unittests repo's `run_benchmark_inps.py` normally does for everything) risks the DRM project
+  starting before its free-field associate has finished, since the DRM forces are computed from the
+  associate's own solved results at solve time, not compile time. The repo's own
+  `exec_unittests.py` was restructured around this (each project's own `names_list` entry can now
+  carry associated-project names as trailing elements, collected into their own fully-completed
+  solve pass run before everything else) — a workflow fix, not something that changes `.inp`
+  semantics, so it isn't reflected in the main doc itself.
+- **The exterior-fixed / interior-force-layer physical picture came from comparing two solved
+  time histories directly** (via `zsoil_output`, the same package/methodology as every other
+  benchmark in this repo — see the `zsoil-output` Claude Code skill): the DRM model's own base node
+  (element 1, the `.dre` exterior set) stayed at velocity ~1e-9 m/s (floating-point noise) for the
+  entire run, while its top node reproduced the plain fixed-base model's own top-node velocity to
+  ~1e-9 m/s residual (relative L2 ~3e-7) — both confirmed against the fixed-base model's own
+  already-solved results, not a hand-derived closed form.
+- **`.drz`/`.dre` populated example**: this pair is the first populated sample seen for either
+  marker (§13's "not chased" list previously had no populated example for this family) —
+  `.drz` = `1` / `2` (one interior element, id 2), `.dre` = `1` / `1` (one exterior element, id 1),
+  consistent with the plain flat element-id-list shape §13.2 already documented (not the
+  face/edge-referencing shape speculated for the neighboring `.fac`/`.mrt` markers - a different,
+  unrelated mechanism, this doesn't resolve that separate uncertainty).
+- **Not chased**: the actual DRM force-injection algorithm/equations (how the free-field project's
+  results get turned into equivalent nodal forces at the `.drz`/`.dre` boundary layer) — the
+  benchmark only confirms the net *effect* (exact reproduction of the reference solution), not the
+  mechanism. No source location was searched for this pass.
+
+See `Benchmarking\Unittests\benchm_prob_groups\C_Benchm_Dynamics.py`'s `BenchmarkDynamicColumnDRM`
+for the actual verification code and its own docstring's numeric values.
 
 ## Corrected mistake (kept here as a flag, not in the main doc)
 
