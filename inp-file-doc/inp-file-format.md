@@ -125,7 +125,7 @@ Lines 2–136 are a fixed, always-135-line sequence of `<count> # <description>`
 
 | # | Count field (label as it appears in the file) |
 |---|---|
-| 1 | dimension 2 or 3 |
+| 1 | dimension 2 or 3 — **not reliable as a 2D/3D indicator**; at least one corpus file reads `2` while containing only 3D continuum elements. Use `<AnalysisType>` (§3.3) instead. |
 | 2 | number of materials |
 | 3 | number of Existence functions |
 | 4 | number of nodal forces (`.inl`) |
@@ -240,11 +240,14 @@ FLOW: -
 <UnitForce> <UnitLength> <UnitAngle> <UnitTime> <UnitTemperature>
 <UnitForce> <UnitLength> <UnitAngle> <UnitTime> <UnitTemperature>
                                  <- blank line
+<AnalysisType> <?>
 ```
 
 Each `HEAT:`/`HUMIDITY:`/`FREE_FILED_MOTION:`/`FLOW:` line names an associated companion project file, or `-` if none is linked. `UnitSystemName` is a free-text label (e.g. `STANDARD`, `EXAMPLE UNITS`). The two unit lines are **not a duplicate**: the first is the unit system used **in the preprocessor** (model input/editing), the second is the unit system used **in the postprocessor** (results display) — usually identical, but can differ if display units were changed after the model was built. Observed unit values include `kN`, `m`, `deg`/`rad`, `year`/`day`/`h`, `C`.
 
 **`FREE_FILED_MOTION:` (that spelling — not a transcription typo, it's how ZSoil itself writes it) is a *solve-order* dependency, not just a file reference.** Confirmed empirically (not decoded from source): the named companion project's own **solved results** are read in when the depending project is *solved*, not when it's compiled — so the associated project must be fully solved first, or the depending solve finds missing/stale data. This is the mechanism behind the Domain Reduction Method; see §13.2 for the confirmed physical behavior and a worked example.
+
+**`<AnalysisType>`, the first field on the line right before `CONTROL`, is the model's problem-type/dimensionality selector: `0`=plane strain, `2`=axisymmetric, `4`=3D.** Determined empirically across the full unittest corpus — every axisymmetric-named file (`*axisymm*`, `truss_axisym*`) reads `2`, every 3D-named/3D-element file reads `4`, and every plain 2D file reads `0`, with zero exceptions across ~90 files. (The header count block's own `# dimension 2 or 3` field, §3.2, is **not** reliable for this — it can read `2` even on a file with only 3D continuum elements, so don't use it as a substitute.) Values `1`/`3` (plausibly Generalized Plane Strain / Plane Stress, going by the even spacing) don't occur in the available corpus and aren't confirmed. The second field's meaning isn't confirmed — it reads `1` (rather than `0`) on a handful of files that are also all two-phase-flow-adjacent (`boxw1-3.inp`, `foot_undrained.inp`, `foot_undrained_cns.inp`), suggesting an undrained/two-phase-flow flag rather than anything analysis-type-related, but this isn't independently confirmed.
 
 ### 3.4 Analysis control blocks
 
@@ -2095,7 +2098,7 @@ This walks a complete, minimal 2D file end to end — a single `Q4` continuum el
 | 2–136 | `2 # dimension 2 or 3` / `1 # number of materials` / `0 # number of Existence functions` / `0 # number of nodal forces(*.inl)` / `4 # number of nodes (*.ing)` / `1 # number of continuum 2D elements` / `4 # number of boundary conditions (*.inb)` / ... (rest `0`) | The fixed 135-line header count block (§3.2) — this file is 2D, 1 material, 0 EF/LF, 4 nodes, 1 `Q4` element, 4 BCs, everything else zero. |
 | 137–141 | `ASSOCIATED_PROJECTS:` / `HEAT: -` / `HUMIDITY: -` / `FREE_FILED_MOTION: -` / `FLOW: -` | No linked companion projects (§3.3). |
 | 142–145 | `STANDARD` / `kN  m  deg  year  C` (×2) / *(blank)* | Unit system: kN, m, degrees, years, °C. |
-| 146 | `4 0` | Un-named flag pair preceding `CONTROL` — meaning unclear. |
+| 146 | `4 0` | `<AnalysisType> <?>` (§3.3) — `4` reads as 3D by the corpus-wide mapping, which sits oddly next to this walkthrough's own "single `Q4` continuum element" description above; flagged rather than silently reconciled, since this table wasn't rebuilt from a fresh file for this pass. |
 | 147–150 | `CONTROL 1` / `Default` / 18-value line / 10-value line | One named solver-control set, "Default" (§3.4). |
 | 151–160 | `DYN_CONTROL 1` ... `PSH_CONTROL 1` ... | Dynamic/pushover control, one "Default" set each. |
 | 161–166 | `NONL_GEOM 0` / `CONSTRUCTION 0  0` / `PROJECT_PRESELECTION` / `5 0 0 0 0 1` | Simple analysis flags (§3.4) — no large-deformation, no construction staging. |
