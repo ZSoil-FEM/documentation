@@ -459,7 +459,7 @@ ZSoil organizes every material by **Continuum/Structure type** (which element gr
 | Beams (`BEL2`, §7.2) | `Elastic Beam` (plain) | `ELAS->` `GEOM->` `MAIN->` `DENS->` `FLOW->` `CREEP->` `NONL->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | `GEOM->` selects Profiles/User/Values cross-section (§4.3.2). |
 | Beams | `Elastic Beam` (layered/composite) | same tag set; `GEOM->` carries embedded reinforcement fibers | Same type *string* as plain `Elastic Beam` — distinguished only by `BUTTONS=`'s `Non linear` flag, index 6, repurposed as an `IsLayeredCrossSection` selector (§4.3.2). Fibers reference `LAYERED_BEAM_COMPONENTS` (§4.4). |
 | Trusses (`TRS2`/`LNK2`, §7.3) | `Truss/Cable` | `ELAS->` `GEOM-><area>` `MAIN->` `DENS->` `FLOW->` `CREEP->` `NONL->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | Only the numeric sub-tag content is documented, via the element's `mat` reference. |
-| Shells (`SXQ4`/`SHQ4`, §7.5) | `Shell` (plain, single/one-layer) | `Unit weights`(`DENS->`) `Flow`(`FLOW->`) `Non linear`(`NONL->`) `Heat`(`HEAT->`) `Humidity`(`HUMID->`) `Damping`(`DAMP->`) | This formulation's own `ELAS->`/`GEOM->` content is not documented here. |
+| Shells (`SXQ4`/`SHQ4`, §7.5) | `Shell` (plain, single/one-layer) — DAT code `ELASTIC_S` | `Elastic`(`ELAS-><E> <nu>`) `Unit weights`(`DENS->`) `Flow`(`FLOW->`) `Non linear`(`NONL->`) `Heat`(`HEAT->`) `Humidity`(`HUMID->`) `Damping`(`DAMP->`) | `GEOM->` is empty for this formulation - shell thickness lives per-element in `.ilt` (§7.5) instead of in the material record, unlike a layered shell's own `GEOM->` table. Confirmed via the compiled `.dat`'s own material id (`ELASTIC_S`), one populated example: `ELAS-> 10000000  0.3` (E=1e7, ν=0.3), material catalog name `"Shell Elastic"`. |
 | Shells | `Shell Layered` | `ELAS->` (own, likely vestigial) `GEOM->` (core+fiber layer table) `DENS->` `FLOW->` (shell variant, §4.3.5) `CREEP->` `NONL->` (own, likely unused) `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | `GEOM->` references a **second `NUM_MATERIALS=` pass** (§4.4) for its fiber/core materials, rather than embedding them the way a layered beam does. |
 | *(fiber/core layer material, 2nd `NUM_MATERIALS=` pass — §4.4)* | `Fiber Shell` | `Elastic`(`ELAS-><E>` only) `Geometry`(`GEOM->`, type+direction) `Non linear`(`NONL->`, `ft`/`fc`) `MAIN->` `DENS->` `FLOW->` `CREEP->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | This is where a layered shell's real tension/compression capacity and stiffness actually live (§4.3.1, §4.3.7). |
 | *(fiber/core layer material, 2nd pass)* | `Orthotropic shell` (lower-case `"shell"`) | `Elastic`(`ELAS->`, E1/E2/ν12/G0) `Unit weights`(`DENS->`) `Geometry`(`GEOM->`, direction vector only) `Flow`(`FLOW->`) `MAIN->` `CREEP->` `HEAT->` `HUMID->` `INIS->` `STAB->` `DISC->` `DAMP->` | **No `Non linear` option at all** — always linear-elastic, e.g. for a directional mesh/stiffener layer rather than a rebar fiber. |
@@ -477,6 +477,7 @@ This subchapter documents each sub-tag once, covering every formulation-specific
 | Beam `Elastic Beam` (plain or layered) | `<E> <nu> <1>` + 2 more lines, unknown | `ELAS-> 200000000  0.3  1` / `0  0` / `0  0` |
 | `Fiber Shell` | `<E>` only — the material only takes a single Young's modulus; the file still stores a second value (`nu`), presumably unused for this uniaxial fiber model | `ELAS-> 2e+08  0.3` / `0  0` ×2 |
 | `Orthotropic shell` | `<E1> <E2> <nu12> <G0>` — `E1`, `E2` `[kN/m²]`, `ν12`, `G0` `[kN/m²]` | `ELAS-> 2.7e+07  2.7e+07  0.2  1.1e+07` / `0 0 0 0` ×2 |
+| Shell `Shell` (plain, single/one-layer, `ELASTIC_S`) | `<E> <nu>` + 2 more lines, unknown (same secondary-line shape as Continuum/Beam `Elastic`) | `ELAS-> 10000000  0.3` / `0  0` / `0  0` |
 | Continuum `HS-small strain stiffness` | see field table below | `ELAS-> 80000  0.2  0.5  100  10  0  1  193766  0.0002  2  1  0  90  0  2  1.6` |
 
 The secondary lines for Continuum/Beam are not anisotropy or damping data — they're a load-function ref, a spatial-data ref, and (ver≥16.95) an evolution-function ref for `E`/`nu`, i.e. `E.Lf nu.Lf` / `E.Sdata nu.Sdata` / `E.EvolFun nu.EvolFun`; all `0`/unset in every model seen so far. Note `"Orthotropic shell"`'s material type string is lower-case `"shell"`, inconsistent with `"Shell Layered"`/`"Fiber Shell"`'s capitalization elsewhere in the format.
@@ -1121,6 +1122,16 @@ Line 3: prestress record count = `0` → no prestress lines follow.
 1.000000000000e+02 0 2  1
 ```
 Prestress count = `1`, followed by one record `<value> <LF> <EF> <DefWay>` = `1.000000000000e+02 0 2  1` → prestress `value`=100, `LF`=0 (no load-function-driven ramp — this one genuinely is a `LOAD_FUN` reference), `EF`=2 (existence function gating the prestress), `DefWay`=1 (prestress defined by force; `0`=by stress).
+
+**`LNK2` with a nonzero `SizeAt`** (confirmed from an anchor whose free length is deliberately embedded in a wall - i.e. a genuine "nodal link" case, `SizeAt[0]`≠`0`, unlike every `TRS2` example above where both are `0`):
+```
+.itg
+166 1 LNK2 158 157 1 0 2 0 158
+ 13 0 0 1 0 0
+1
+1.000000000000e+02 0 2  1
+```
+Line 1 carries **one extra trailing field** beyond the 6 documented above: `<node1> <node2> <SizeAt0> <SizeAt1> <AttachHexa0> <AttachHexa1> <host-elem-id>` = `158 157 1 0 2 0 158`. `SizeAt0`=1 (one linked end, hence `LNK2`), `AttachHexa0`=2 ("embedded in structural elements"), and the trailing `158` is the global `<idx>` of the actual host element the free end embeds into - confirmed by checking two independent models (2D beam-wall and 3D shell-wall) built from the same template: both give the *identical* trailing value `158`, which is the 8th of a 15-element wall chain (elements 151-165) in *both* models despite the anchor's own node numbers differing between them (158/157 in the 2D file, 315/316 in the 3D one) - i.e. the trailing field tracks the wall's own element numbering, not the anchor's nodes, ruling out it being a repeated/derived node id. Read as **one host-element id per nonzero `SizeAt[i]`**, appended after the 6 base fields, in the same `AttachHexa`-per-end order - unconfirmed for `AttachHexa=1` ("embedded in continuum"), no example with that combination was available; also unconfirmed whether *both* ends being linked (`SizeAt[0]` and `SizeAt[1]` both nonzero) simply appends two trailing ids or something else.
 
 ### 7.4 `.iff` — Fixed Anchor Zones
 
