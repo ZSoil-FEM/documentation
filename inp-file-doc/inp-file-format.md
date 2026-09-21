@@ -1047,7 +1047,7 @@ Node indices follow the tag, then the `splitPar` mesh-subdivision counts (2 valu
 ```
 Field breakdown (0-indexed after split): `v0`=1 (idx), `v1`=1 (element number), `v2`=`Q4`, `v3..v6`=nodes 1,2,3,4, `v7..v8`=1,1 (`splitPar`, unsplit), `v9`=1 (`mat1`), `v10`=0 (`mat2`), `v11`=0 (`mat3`), `v12`=0 (`EF`), `v13`=0 (`ULF`), `v14`=0 (`iLayer`).
 
-**Node order / face numbering**: `v3..v6` must be listed counter-clockwise (positive-area shoelace sum) — a clockwise or self-intersecting listing produces a degenerate/inverted element. Local face (edge) numbering follows directly from this order: **face `k` is the edge from `node_k` to `node_{k+1}`** (1-indexed, wrapping — face 1 = n1→n2, ..., face 4 = n4→n1). This is what `.ics`/`.icg` "paired-elem face" fields (§7.8, §7.9) and `.gsl` `UNI_LOAD` face references (§9.3) mean.
+**Node order / face numbering**: `v3..v6` must be listed **counter-clockwise** — as viewed in a standard plan view (x right, y up, looking against the element's own out-of-plane/normal axis), i.e. a positive-area shoelace sum; a clockwise or self-intersecting listing produces a degenerate/inverted element. Local face (edge) numbering follows directly from this order: **face `k` is the edge from `node_k` to `node_{k+1}`** (1-indexed, wrapping — face 1 = n1→n2, ..., face 4 = n4→n1). This is what `.ics`/`.icg` "paired-elem face" fields (§7.8, §7.9) and `.gsl` `UNI_LOAD` face references (§9.3) mean.
 
 **B8 (8-node hex)**:
 ```
@@ -1055,6 +1055,15 @@ Field breakdown (0-indexed after split): `v0`=1 (idx), `v1`=1 (element number), 
 1 1 B8 1 2 4 3 5 6 8 7 1 1 1 1 0 0 0 0 0
 ```
 `v0`=1, `v1`=1, `v2`=`B8`, `v3..v10`=nodes (1,2,4,3,5,6,8,7), `v11..v13`=1,1,1 (`splitPar`, unsplit — 3 values for a 3D element vs. `Q4`'s 2), `v14`=1 (`mat1`), `v15`=0 (`mat2`), `v16`=0 (`mat3`), `v17`=0 (`EF`), `v18`=0 (`ULF`), `v19`=0 (`iLayer`). This layout is identical for the EAS and B-bar formulation variants — the formulation choice is not encoded in this record.
+
+**B8 node order — corkscrew rule.** The 8 nodes form two quad faces, local nodes `1-2-3-4` and local nodes `5-6-7-8` (connected edge-to-edge `1-5, 2-6, 3-7, 4-8` — same pairing as the face table below), and **both faces wind in the same rotational sense, viewed from one consistent external vantage point** — not the *opposite*-winding convention `.icg`/`.ics` contact records use to pair up two faces (§7.8/§7.9); don't conflate the two. Concretely, for a box aligned with the element's own local `x,y,z` axes, with the `1-2-3-4` face at the `z`-minimum end:
+
+```
+node 1: (x_min, y_min, z_min)        node 5: (x_min, y_min, z_max)  <- directly "above" node 1
+node 2: (x_max, y_min, z_min)        node 6: (x_max, y_min, z_max)  <- directly "above" node 2
+node 3: (x_max, y_max, z_min)        node 7: (x_max, y_max, z_max)  <- directly "above" node 3
+node 4: (x_min, y_max, z_min)        node 8: (x_min, y_max, z_max)  <- directly "above" node 4
+```
 
 **B8 face numbering** — relevant wherever a `faceId` targets a `B8` element (`.gsl` `UNI_LOAD`, §9.3; `.ple` `POINT_LOAD`/`SURF_LOAD` with `targetType 8`, §9.4). Local nodes 1–4 form one quad face and 5–8 the opposite quad face, connected edge-to-edge (1–5, 2–6, 3–7, 4–8); the 6 face ids are assigned so that **opposite faces sum to 7**:
 
@@ -1074,6 +1083,8 @@ Field breakdown (0-indexed after split): `v0`=1 (idx), `v1`=1 (element number), 
 2 2 T3 1 4 3 1 1 0 0 0 0 0
 ```
 `v0`=1, `v1`=1, `v2`=`T3`, `v3..v5`=nodes (2,1,3), then `v6..v12`=`1 1 0 0 0 0 0` (7 trailing fields vs. 8 for `Q4`/`B8` — `T3` has only 1 `splitPar` value): `v6`=1 (`splitPar`, unsplit), `v7`=1 (`mat1`), `v8`=0 (`mat2`), `v9`=0 (`mat3`), `v10`=0 (`EF`), `v11`=0 (`ULF`), `v12`=0 (`iLayer`).
+
+Same **counter-clockwise** rule as `Q4` — confirmed against `el_patch_test_2D_tri.inp`'s real coordinates (positive shoelace sum for every one of its 6 triangles, e.g. element 1's nodes `2,1,3` at `(0.05,0.02), (0,0.12), (0,0)`).
 
 A `W6` (6-node wedge/prism) tag exists, with the same layout pattern as `B8` (nodes then `1 1 1` splitPar then `mat1 mat2 mat3 EF ULF iLayer`):
 ```
@@ -1149,6 +1160,10 @@ Type tags: `SXQ4` (4-node thin/one-layer shell) and `SHQ4` (8-node thick shell).
 ```
 `v0`=2 (idx), `v1`=1 (number), `v2`=`SXQ4`, `v3..v6`=nodes (1,5,6,2), `v7..v9`=1,1,1 (`splitPar`, unsplit — same pattern as `B8`'s three extra ints), `v10`=2 (`mat1`), `v11`=2 (`mat2`), `v12`=2 (`mat3`), `v13`=3 (`EF`), `v14`=1 (`ULF`), `v15`=1 (thickness-table index → `.ilt` record 1), `v16`=0 (`iLayer`). No `SHQ4` example is available.
 
+**Normal direction**: with `n1,n2,n3,n4` the 4 nodes in file order, take edge vector `e1 = n2 − n1` and edge vector `e2 = n4 − n1`; the shell's local-`z`/normal direction is parallel to `e1 × e2`.
+
+**Node order**: same counter-clockwise rule as `Q4`/`T3` (§7.1), just applied in the shell's own local plane seen from the positive normal direction.
+
 **`.ilt`** (thickness table) — blank-line-terminated list of thickness definitions referenced by the `thick` field above. Each entry starts with a `type` code; `type=0` is followed by one line giving a single float (uniform thickness); `type=1` would be followed by two float lines but no example is available.
 
 ```
@@ -1214,6 +1229,7 @@ Line 5 (repeated `numSet` times): `<type> <mat> <EF> <ULF> <initialGapNotUsed>` 
 No name
 1 2 0 0 0.000000e+00
 ```
+**Node order differs from `C_L2`**: confirmed by generating a volumic-volumic (pile-shaft/pile-toe) contact both ways and headlessly solving — `C_Q4` does **not** use `C_L2`'s reversed-`elem1`/forward-`elem2` convention (line 1216 above). Both 4-node groups are listed in the **same order**: `elem1`'s own face nodes (in `elem1`'s own natural face-node extraction order, §7.1's face table), then `OppEleNum`'s corresponding nodes in the same positional order. Applying the `C_L2` reversal convention here produces a hard Fortran crash ("0 or negative jacobian"); plain same-order does not — the reversal note in §7.8's `C_L2` paragraph is `C_L2`(2D)-specific, not general to `C_Q4`.
 
 **Multiple staged records on one contact** — the same geometry can be re-used across load stages by bumping the trailing record count on the node line:
 ```
@@ -1244,8 +1260,12 @@ No name
 1 3 3 0 0.000000e+00
 ```
 Line 1: `<idx> <number> C_Q4 <cnt-elem> <cnt-face> <iLayer> <nsides> <activeFlg>` → `cnt-elem`=2/`cnt-face`=1 (the contact's own defining element+face), `iLayer`=0, `nsides`=1 (single-sided; `2`=double-sided), `activeFlg` bitmask (`1`=positive side active, `2`=negative side active, `3`=both — here `2`).
-Line 2: interface name. Line 3: `<paired-elem> <paired-face>` = `1 3` (shell element 1, face 3). Line 4: 8-node connectivity. Line 5–6: *(unclear)*. Line 7: `<?> <mat> <EF> <ULF> <trailing float>` = `1 3 3 0 0.000000e+00` → mat=3, EF=3, ULF=0 (unloading function — a `LOAD_FUN` reference in the unloading role).
+Line 2: interface name. Line 3: `<paired-elem> <paired-face>` = `1 3` (shell element 1, face 3). Line 4: 8-node connectivity. Line 5–6: *(likely, not fully confirmed)* by structural analogy with `.icg` (§7.8), which has the same trailing shape split across its node line and gap line: line 5 `1 1` = `<genFullContinuity> <numSet>` (no `iLayer` slot here — it already has its own field on line 1), line 6 `0.000000e+00 0` = `<InitialGap> <InitialGapEF>`, same fields/meaning as `.icg`'s. Line 7: `<?> <mat> <EF> <ULF> <trailing float>` = `1 3 3 0 0.000000e+00` → mat=3, EF=3, ULF=0 (unloading function — a `LOAD_FUN` reference in the unloading role).
 If double-sided, lines 3–7 repeat once more for the negative side.
+
+**Which element is `cnt-elem` (header) vs `paired-elem` (line 3) is not fixed by the format** — it's whichever element the authoring tool happened to define the contact from, not a rule tied to element type. Confirmed from a real, solved raft-on-soil model with this shape: `cnt-elem` was consistently the **shell** (paired-elem the underlying soil volumic element) — the opposite assignment from this section's own example (where line 3's paired-elem is explicitly the shell). Don't assume either direction; check the specific file.
+
+**8-node connectivity (line 4) node order**: it is **not** simply "`cnt-elem`'s own nodes then `paired-elem`'s own nodes" in each element's own native order. The actual rule is asymmetric: `[paired-elem's own face nodes, in paired-elem's own natural face-node extraction order] + [cnt-elem's own nodes, reordered to positionally match paired-elem's nodes one-for-one by coincident coordinate]` — independent of the `cnt-elem`/`paired-elem` header roles above. Building both sides from `cnt-elem`'s own node order (the more natural-looking reading) connects the contact to the wrong nodes without erroring.
 
 **`C_L2` paired with beam elements**:
 ```
