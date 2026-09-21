@@ -947,7 +947,7 @@ NODES <count>
 ...
 ```
 
-Example header line (one 2D subdomain): `1 128 SUBD_2D 4 4 0 4 1 4 0 1 0 0`. *(Full field-by-field meaning of the header/meshing-parameter lines is unknown — treat this block as opaque GUI-managed data unless specifically working on subdomain/staging definitions.)* Related markers `.psd`, `.goa`, `.sg0` appear immediately after `.sdm` in the marker sequence and are typically empty; likely auxiliary subdomain data *(unknown)*.
+Example header line (one 2D subdomain): `1 128 SUBD_2D 4 4 0 4 1 4 0 1 0 0`. *(Full field-by-field meaning of the header/meshing-parameter lines is unknown — treat this block as opaque GUI-managed data unless specifically working on subdomain/staging definitions.)* Related markers `.psd`, `.goa` appear immediately after `.sdm` in the marker sequence and are typically empty; likely auxiliary subdomain data *(unknown)*. (`.sg0`, which also sits in this stretch of the marker sequence, is unrelated to subdomains — it's the element-wise initial-stress mechanism, see §11.1.)
 
 ### 6.5 Local bases, axes, and auxiliary geometry
 
@@ -1131,7 +1131,7 @@ Prestress count = `1`, followed by one record `<value> <LF> <EF> <DefWay>` = `1.
 1
 1.000000000000e+02 0 2  1
 ```
-Line 1 carries **one extra trailing field** beyond the 6 documented above: `<node1> <node2> <SizeAt0> <SizeAt1> <AttachHexa0> <AttachHexa1> <host-elem-id>` = `158 157 1 0 2 0 158`. `SizeAt0`=1 (one linked end, hence `LNK2`), `AttachHexa0`=2 ("embedded in structural elements"), and the trailing `158` is the global `<idx>` of the actual host element the free end embeds into - confirmed by checking two independent models (2D beam-wall and 3D shell-wall) built from the same template: both give the *identical* trailing value `158`, which is the 8th of a 15-element wall chain (elements 151-165) in *both* models despite the anchor's own node numbers differing between them (158/157 in the 2D file, 315/316 in the 3D one) - i.e. the trailing field tracks the wall's own element numbering, not the anchor's nodes, ruling out it being a repeated/derived node id. Read as **one host-element id per nonzero `SizeAt[i]`**, appended after the 6 base fields, in the same `AttachHexa`-per-end order - unconfirmed for `AttachHexa=1` ("embedded in continuum"), no example with that combination was available; also unconfirmed whether *both* ends being linked (`SizeAt[0]` and `SizeAt[1]` both nonzero) simply appends two trailing ids or something else.
+Line 1 carries **one extra trailing field** beyond the 6 documented above: `<node1> <node2> <SizeAt0> <SizeAt1> <AttachHexa0> <AttachHexa1> <host-elem-id>` = `158 157 1 0 2 0 158`. `SizeAt0`=1 (one linked end, hence `LNK2`), `AttachHexa0`=2 ("embedded in structural elements"), and the trailing `158` is the global `<idx>` of the actual host element the free end embeds into - confirmed by checking two independent models (2D beam-wall and 3D shell-wall) built from the same template: both give the *identical* trailing value `158`, which is the 8th of a 15-element wall chain (elements 151-165) in *both* models despite the anchor's own node numbers differing between them (158/157 in the 2D file, 315/316 in the 3D one) - i.e. the trailing field tracks the wall's own element numbering, not the anchor's nodes, ruling out it being a repeated/derived node id. Read as **one host-element id per nonzero `SizeAt[i]`**, appended after the 6 base fields, in the same `AttachHexa`-per-end order - unconfirmed for `AttachHexa=1` ("embedded in continuum"), no example with that combination was available; also unconfirmed whether *both* ends being linked (`SizeAt[0]` and `SizeAt[1]` both nonzero) simply appends two trailing ids or something else. This embedding compiles into the same `.dat` `LINK` block as the dedicated `.gnl` "Nodal Link" feature - see §7.10 for the block format and how the two relate.
 
 ### 7.4 `.iff` — Fixed Anchor Zones
 
@@ -1284,7 +1284,38 @@ The two sides use opposite node order relative to the beam's node1→node2 direc
 
 ### 7.10 `.ikg` — Kinematic constraints, `.gnl` — Nodal links, `.ijg` — Joints
 
-`.ikg` header: `"# number of kinematic constrains (*.ikg)"`; `.gnl` header: `"# number of Nodal Links (*.gnl)"`; `.ijg` has no dedicated header label. `.ikg` and `.gnl` are blank in every sample seen. `.ijg` populated example:
+`.ikg` header: `"# number of kinematic constrains (*.ikg)"`; `.gnl` header: `"# number of Nodal Links (*.gnl)"`; `.ijg` has no dedicated header label. `.ikg` is blank in every sample seen. `.gnl` and `.ijg` have populated examples below.
+
+**`.gnl` — Nodal Links** (confirmed from a set of minimal models built specifically to isolate this feature: a single `B8` cube, a single flat `SXQ4` shell, and a row of 5 vertical `SXQ4` "wall" shells — each with one or more free-standing nodes kinematically tied into the surrounding mesh):
+```
+.gnl
+1 5 0 9 1 126
+ 0 0 0 0 0 0 0 0 0 0 0
+1 
+No name
+```
+Line 1: `<idx> <linkedNode> 0 9 1 <dofMask>`. The `9` is a constant seen in every example gathered (plausibly a fixed slot-count, matching the 9 possible nodal DOFs — see the mask below); the `1` right before `<dofMask>` is likewise constant across every example, **including links to different host elements** — it is not a host-element reference (see the compile-time note below).
+
+`<dofMask>` is a bitmask over the 6 mechanical DOFs, decoded from a matched set of 7 links spanning one fully-rigid case and 4 single-DOF-released variants of the same geometry:
+
+| bit (value) | DOF |
+|---|---|
+| bit0 (unused/reserved — always `0` in every sample) | — |
+| bit1 (`2`) | `ux` |
+| bit2 (`4`) | `uy` |
+| bit3 (`8`) | `uz` |
+| bit4 (`16`) | `rx` |
+| bit5 (`32`) | `ry` |
+| bit6 (`64`) | `rz` |
+| bits7-8 (`128`/`256`, unconfirmed) | pressure / temperature / humidity — never seen set, no example links a fluid/thermal DOF |
+
+E.g. `14` = `2+4+8` = `ux,uy,uz` linked, no rotations — used both for a node linked to a solid `B8` element (which has no rotational DOF to tie to at all) and for a node linked exactly at a flat shell's own centroid (no eccentricity, no moment needs transmitting). `126` = all 6 mechanical DOFs set — a fully rigid link, used where the linked node sits exactly at a shell's own edge (still a point on the shell's surface, not offset off it) with a rigid beam arm continuing past that edge in the shell's own plane - since the link point itself carries zero eccentricity, "fully rigid" here means the beam end's translation and rotation both exactly match the shell edge's own (interpolated) translation and rotation. `62`/`118`/`122`/`124` are each `126` minus exactly one bit (`rz`/`uz`/`uy`/`ux` respectively released) — confirmed via 5 otherwise-identical wall+arm models differing only in which single DOF is excluded from the mask, to test that the nodal link can release DOFs individually.
+
+The second line (`0 0 0 0 0 0 0 0 0 0 0`, 11 fields) is unconfirmed — always all-zero in every raw `.inp` example gathered, regardless of the host element's own node count (4-node shell vs. 8-node solid), so it's unlikely to be per-host-node interpolation weights; possibly a placeholder ZSoil's own preprocessor recomputes rather than something authored. The trailing `1` (repeating the record's own `<idx>`) plus `No name` matches the naming-line convention used elsewhere (e.g. `.itg`, §7.3).
+
+**Host element resolution is compile-time only — absent from the raw `.inp`.** Unlike the `.gnl` block above (where the placeholder stays a constant `1` no matter which element is actually linked), the compiled `.dat`'s own `LINK` block carries the resolved host element in that same field position: `<node> <hostElementIdWithinItsGroup> 0 <dofMask> <11 more fields>` — confirmed by cross-checking a `.gnl` block linking 5 nodes to 5 different shells against the compiled `.dat`, where the placeholder `1` becomes each shell's own ordinal (`1`..`5`, matching its position in `.ilg`). This is the **same `LINK` block** that `LNK2`'s embedded-truss mechanism (§7.3) compiles into as well — confirmed by finding an identical 15-field row there, with `<dofMask>` in the same position (always `14`, translation-only, since a truss end has no rotational DOF) and a trailing-fields section that differs from the pure `.gnl` case in a way that tracks the truss's own `AttachHexa` value. In other words, `.gnl`'s explicit "Nodal Link" tool and `LNK2`'s "embedded free length" are two different `.inp`-level entry points into the same underlying link engine. Since this resolution never appears in the raw `.inp` itself, it's beyond this doc's `.inp`-only scope — see the `zsoil-output` skill's `references/file-formats.md` for the `.dat` `LINK` block.
+
+`.ijg` populated example:
 ```
 .ijg
 5 1 M_L2 1 6 1 4 0 0 0 0 0
@@ -1761,26 +1792,70 @@ The header also carries a second, related pair of counts — "number of Line mas
 
 Initial-state data applied to elements/nodes before the first analysis step (e.g. geostatic stress, phreatic surface).
 
-### 11.1 Initial stress conditions (`.izg`)
+### 11.1 Initial stress conditions (`.izg`, `.sg0`)
 
-Count-terminated (header "number of ini. stress cond."). Assigns an explicit initial stress tensor to a list of elements:
+Two distinct mechanisms both assign an explicit initial stress tensor, and both use the same 6-component column order (`sxx syy sxy szz sxz syz`): `.izg` interpolates a stress **field** over a box, `.sg0` assigns one flat tensor per **group of elements** directly. Don't confuse the two.
+
+**`.izg`** — Count-terminated (header "number of ini. stress cond."). Assigns an explicit initial stress tensor over a hexahedral (3D) or quadrilateral (2D) **box spanned by corner nodes** — the list is **node ids**, and its length is fixed by dimensionality (`nNodes`=8 in 3D, 4 in 2D):
 
 ```
-<idx> <nElements> <eleId1> <eleId2> ... <eleIdN> <flag> <flag>
+<idx> <nNodes> <nodeId1> <nodeId2> ... <nodeIdN> <ExistFunct> <iLayer>
 <name>
-<sxx> <syy> <szz> <sxy> <syz> <sxz>       <- one line per element in the list, in order
+<sxx> <syy> <sxy> <szz> <sxz> <syz>       <- one line per node in the list, in order
 ...
 ```
 
-Example (initial vertical stress of -10 applied to elements 1–4):
+`<ExistFunct>` is the existence function; `<iLayer>` is the same GUI layer-grouping index seen trailing element records (§7 intro).
+
+Example (a 3D box, 8 corner nodes, K0-geostatic stress):
 ```
 .izg
-1 4 1 2 3 4 0 0
+1 8 4 1 2 3 8 5 6 7 0 0
 No name
- 0.000000000000e+000 -1.000000000000e+001 0.000000000000e+000 0.000000000000e+000 0.000000000000e+000 0.000000000000e+000
- 0.000000000000e+000 -1.000000000000e+001 0.000000000000e+000 0.000000000000e+000 0.000000000000e+000 0.000000000000e+000
+ -5.000000000000e+00 -1.000000000000e+01 0.000000000000e+00 -5.000000000000e+00 0.000000000000e+00 0.000000000000e+00
+ -1.500000000000e+01 -3.000000000000e+01 0.000000000000e+00 -1.500000000000e+01 0.000000000000e+00 0.000000000000e+00
+ -1.500000000000e+01 -3.000000000000e+01 0.000000000000e+00 -1.500000000000e+01 0.000000000000e+00 0.000000000000e+00
+ -5.000000000000e+00 -1.000000000000e+01 0.000000000000e+00 -5.000000000000e+00 0.000000000000e+00 0.000000000000e+00
+ -5.000000000000e+00 -1.000000000000e+01 0.000000000000e+00 -5.000000000000e+00 0.000000000000e+00 0.000000000000e+00
+ -1.500000000000e+01 -3.000000000000e+01 0.000000000000e+00 -1.500000000000e+01 0.000000000000e+00 0.000000000000e+00
+ -1.500000000000e+01 -3.000000000000e+01 0.000000000000e+00 -1.500000000000e+01 0.000000000000e+00 0.000000000000e+00
+ -5.000000000000e+00 -1.000000000000e+01 0.000000000000e+00 -5.000000000000e+00 0.000000000000e+00 0.000000000000e+00
 ```
-(6-component stress tensor per line: `sxx syy szz sxy syz sxz` — here `syy = -10` for every listed element, all other components zero.)
+(node ids `4 1 2 3 8 5 6 7`, the box's two 4-node faces at different elevations.)
+
+Per-node stress tensor column order is `sxx syy sxy szz sxz syz`. In the GUI's simple K0-geostatic entry mode (`Sig`, `gamma`, `Ko`, applied per node by depth `dy` below the box's topmost node): `syy = Sig − dy·gamma`, `sxx = szz = syy·Ko`, all three shear components zero. The example above is exactly this: the shallower 4 nodes read `syy=-10, sxx=szz=-5` (`Ko=0.5`), the deeper 4 nodes read `syy=-30, sxx=szz=-15` (same `Ko`, greater depth) — a uniform `gamma`/`Ko` referenced from a single `Sig` at the shallowest node. (The GUI also supports a fully independent 6-component entry per node, not just this K0 shortcut — the file format doesn't distinguish which entry mode was used.)
+
+**`.sg0`** — Assigns one flat, directly-entered stress tensor per **named group of elements** (`Sig0Load`) — no interpolation, no box shape, just a constant tensor applied to whichever elements are assigned to that group:
+```
+<nGroups>
+<groupIdx> <type> <sxx> <syy> <sxy> <szz> <sxz> <syz> <Ltf>    <- header line per group
+<label>                                                          <- "No name" if unlabeled
+...                                                                <- nGroups groups total
+<eleId> <groupIdx>                                                <- one line per element that
+...                                                                   has a group assigned (only
+                                                                       assigned elements appear —
+                                                                       not zero-padded per element)
+```
+`<type>` selects the element family (and thus the dialog/field layout): `0`=truss, `1`=membrane (uses a 3-value stress + 3-value direction vector instead of the full 6-component tensor), `2`=continuum (the 6-component tensor above). `<Ltf>` is written directly after the 6 values, ahead of the label — likely a load/time-function reference by the naming convention used elsewhere (`EF`/`LF`/`ULF`), but not independently confirmed. `<groupIdx>` in the trailing element list matches a group's `<groupIdx>` from its header line, numbered sequentially in write order (`1`, `2`, ...). Written per element-type manager in turn (trusses, beams, quads, shells, one-layer shells, membranes, infinite elements, then continuum/hexas) — so the trailing element-assignment list can interleave element types if a model mixes them, all in one flat run of `<eleId> <groupIdx>` lines.
+
+Example (2 continuum groups, 8 elements total — 4 assigned to each):
+```
+.sg0
+2
+1 2 -7.500000000000e+00 -1.500000000000e+01 0.000000000000e+00 -7.500000000000e+00 0.000000000000e+00 0.000000000000e+00 0
+No name
+2 2 0.000000000000e+00 -2.500000000000e+01 0.000000000000e+00 0.000000000000e+00 0.000000000000e+00 0.000000000000e+00 0
+No name
+1 2
+2 2
+3 1
+4 1
+5 2
+6 2
+7 1
+8 1
+```
+Group 1: `type=2` (continuum), `sxx=szz=-7.5, syy=-15` (a K0=0.5 profile, same shape as the `.izg` example above). Group 2: `sxx=szz=0, syy=-25` (vertical stress only, no lateral component — a directly-entered tensor, not derived from a K0 shortcut). Elements 3, 4, 7, 8 use group 1; elements 1, 2, 5, 6 use group 2.
 
 ### 11.2 Initial geometric conditions (`.iig`)
 
@@ -1817,7 +1892,7 @@ The remaining initial-condition markers had no non-zero example available, so on
 | `.ieg` | number of ini. strains cond. (Imposed strains) |
 | `.ist` | number of constant eps0 |
 
-Given the `.izg`/`.iig` pattern above (id + element list + flags, then per-element data, with name position varying), these likely follow a similar "element list header, then per-element data block" shape — but this is an extrapolation, not confirmed.
+Given the `.iig` pattern above (id + element list + flags, then per-element data, with name position varying), these likely follow a similar "element list header, then per-element data block" shape — but this is an extrapolation, not confirmed. (`.izg`'s own shape, §11.1, is a node-list/box pattern instead — don't extrapolate from that one.)
 
 ### 11.4 Initial nodal displacement/velocity (`.idv`)
 
@@ -2042,7 +2117,7 @@ The same 91 markers, in the same order, appear in every v26 file (only their con
 | 62 | `.ish` | Shell hinges | §7.5 |
 | 63 | `.ist` | Constant eps0 (initial strain) | §11.3 |
 | 64 | `.goa` | Subdomain-related | §6.4 |
-| 65 | `.sg0` | Subdomain-related | §6.4 |
+| 65 | `.sg0` | Initial stress, element-wise (per-group tensor assignment, `Sig0Load`) | §11.1 |
 | 66 | `.gnl` | Nodal links | §7.10 |
 | 67 | `.pil` | Piles | §7.11 |
 | 68 | `.eie` | Elements excluded from automatic contact generation | §13.3 |
